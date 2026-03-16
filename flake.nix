@@ -18,10 +18,11 @@
         androidComposition = pkgs.androidenv.composeAndroidPackages {
           cmdLineToolsVersion = "13.0";
           platformToolsVersion = "35.0.2";
-          buildToolsVersions = [ "35.0.0" ];
+          buildToolsVersions = [ "34.0.0" "35.0.0" ];
           platformVersions = [ "35" ];
           includeNDK = true;
           ndkVersions = [ "26.1.10909125" ];
+          cmakeVersions = [ "3.22.1" ];
           includeEmulator = false;
         };
 
