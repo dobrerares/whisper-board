@@ -367,6 +367,29 @@ private fun TranscriptionSettingsSection(
     val fallbackTimeout by apiSettingsRepository.fallbackTimeoutSeconds.collectAsState(initial = 15)
     var apiKey by remember { mutableStateOf(apiSettingsRepository.getApiKey()) }
 
+    // Model discovery state
+    var availableModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelsFetchError by remember { mutableStateOf<String?>(null) }
+    var modelsFetching by remember { mutableStateOf(false) }
+    var modelExpanded by remember { mutableStateOf(false) }
+
+    // Fetch models when provider, API key, or base URL changes
+    LaunchedEffect(provider, apiKey, customUrl) {
+        if (strategy == EngineStrategy.LOCAL_ONLY) return@LaunchedEffect
+        modelsFetching = true
+        modelsFetchError = null
+        val result = apiSettingsRepository.fetchAvailableModels()
+        modelsFetching = false
+        result.onSuccess {
+            availableModels = it
+            modelsFetchError = null
+        }
+        result.onFailure {
+            availableModels = emptyList()
+            modelsFetchError = it.message
+        }
+    }
+
     Column {
         // Strategy selector
         Text("Engine Strategy", style = MaterialTheme.typography.bodyMedium)
@@ -467,17 +490,64 @@ private fun TranscriptionSettingsSection(
                 Spacer(modifier = Modifier.height(8.dp))
             }
 
-            // Custom model name (shown for CUSTOM only)
-            if (provider == ApiProvider.CUSTOM) {
+            // Model picker — dropdown if models fetched, text field as fallback
+            val modelLabel = customModel.ifBlank { provider.defaultModel }.ifBlank { "Select model" }
+            if (availableModels.isNotEmpty()) {
+                ExposedDropdownMenuBox(
+                    expanded = modelExpanded,
+                    onExpandedChange = { modelExpanded = it },
+                ) {
+                    OutlinedTextField(
+                        value = modelLabel,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Model") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded)
+                        },
+                        modifier = Modifier.menuAnchor().fillMaxWidth(),
+                    )
+                    ExposedDropdownMenu(
+                        expanded = modelExpanded,
+                        onDismissRequest = { modelExpanded = false },
+                    ) {
+                        availableModels.forEach { modelId ->
+                            DropdownMenuItem(
+                                text = { Text(modelId) },
+                                onClick = {
+                                    scope.launch { apiSettingsRepository.setModel(modelId) }
+                                    modelExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+            } else {
                 OutlinedTextField(
                     value = customModel,
                     onValueChange = { scope.launch { apiSettingsRepository.setModel(it) } },
-                    label = { Text("Model Name") },
+                    label = { Text("Model") },
+                    placeholder = { Text(provider.defaultModel.ifBlank { "model name" }) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Spacer(modifier = Modifier.height(8.dp))
             }
+            if (modelsFetching) {
+                Text(
+                    text = "Fetching available models...",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            } else if (modelsFetchError != null && availableModels.isEmpty()) {
+                Text(
+                    text = "Could not fetch models — enter manually",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Fallback timeout (shown for LOCAL_PREFERRED only)
             if (strategy == EngineStrategy.LOCAL_PREFERRED) {
