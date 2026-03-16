@@ -47,6 +47,10 @@ Java_com_whisperboard_whisper_WhisperLib_fullTranscribe(
         JNIEnv *env, jobject thiz, jlong context_ptr, jfloatArray audio_data, jstring language) {
     UNUSED(thiz);
     struct whisper_context *context = (struct whisper_context *) context_ptr;
+    if (context == NULL) {
+        LOGE("fullTranscribe: context is NULL");
+        return;
+    }
     jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
     const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
 
@@ -96,6 +100,10 @@ Java_com_whisperboard_whisper_WhisperLib_getTextSegmentCount(
     UNUSED(env);
     UNUSED(thiz);
     struct whisper_context *context = (struct whisper_context *) context_ptr;
+    if (context == NULL) {
+        LOGE("getTextSegmentCount: context is NULL");
+        return 0;
+    }
     return whisper_full_n_segments(context);
 }
 
@@ -104,6 +112,10 @@ Java_com_whisperboard_whisper_WhisperLib_getTextSegment(
         JNIEnv *env, jobject thiz, jlong context_ptr, jint index) {
     UNUSED(thiz);
     struct whisper_context *context = (struct whisper_context *) context_ptr;
+    if (context == NULL) {
+        LOGE("getTextSegment: context is NULL");
+        return (*env)->NewStringUTF(env, "");
+    }
     const char *text = whisper_full_get_segment_text(context, index);
     jstring string = (*env)->NewStringUTF(env, text);
     return string;

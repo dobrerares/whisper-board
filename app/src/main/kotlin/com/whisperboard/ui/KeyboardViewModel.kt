@@ -124,9 +124,18 @@ class KeyboardViewModel(
         }
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    /**
+     * Explicitly release resources. Called from WhisperBoardIME.onDestroy()
+     * because this ViewModel is manually constructed and not registered with
+     * the ViewModelStore, so onCleared() is never invoked by the framework.
+     */
+    fun cleanup() {
         whisperContext?.close()
         whisperContext = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        cleanup()
     }
 }
