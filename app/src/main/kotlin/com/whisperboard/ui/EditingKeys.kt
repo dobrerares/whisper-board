@@ -90,8 +90,8 @@ private fun RowScope.EditKey(
             .weight(weight)
             .height(44.dp)
             .padding(horizontal = 2.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = MaterialTheme.shapes.small
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = MaterialTheme.shapes.medium
     ) {
         androidx.compose.foundation.layout.Box(
             contentAlignment = Alignment.Center

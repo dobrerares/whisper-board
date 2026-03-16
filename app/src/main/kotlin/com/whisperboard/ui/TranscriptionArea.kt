@@ -25,7 +25,7 @@ fun TranscriptionArea(
         modifier = modifier
             .height(80.dp)
             .clickable(enabled = text.isNotEmpty()) { onCommit() },
-        color = MaterialTheme.colorScheme.surfaceVariant,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         shape = MaterialTheme.shapes.medium
     ) {
         Box(
@@ -39,13 +39,13 @@ fun TranscriptionArea(
                 Text(
                     text = "Tap mic to start...",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                 )
             } else {
                 Text(
                     text = text,
                     style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }
