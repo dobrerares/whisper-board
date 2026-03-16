@@ -8,9 +8,12 @@ import androidx.lifecycle.viewModelScope
 import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.whisper.WhisperContext
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -50,6 +53,9 @@ class KeyboardViewModel(
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
+    private val _errorMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val errorMessage: SharedFlow<String> = _errorMessage.asSharedFlow()
+
     val waveformData: StateFlow<FloatArray> = audioPipeline.waveformData
 
     var currentImeAction: Int = EditorInfo.IME_ACTION_DONE
@@ -73,7 +79,7 @@ class KeyboardViewModel(
 
                     val ctx = whisperContext
                     if (ctx == null) {
-                        _transcribedText.value = "[No model loaded]"
+                        _errorMessage.tryEmit("No model loaded")
                         Log.w(TAG, "WhisperContext is null — no model loaded")
                         return@launch
                     }
@@ -83,7 +89,7 @@ class KeyboardViewModel(
                     _transcribedText.value = segments.joinToString(" ") { it.text.trim() }
                 } catch (e: Exception) {
                     Log.e(TAG, "Transcription failed", e)
-                    _transcribedText.value = "[Transcription error]"
+                    _errorMessage.tryEmit("Transcription failed")
                 } finally {
                     _isProcessing.value = false
                 }
@@ -92,13 +98,13 @@ class KeyboardViewModel(
             // Start recording
             val ctx = whisperContext
             if (ctx == null) {
-                _transcribedText.value = "[No model loaded]"
+                _errorMessage.tryEmit("No model loaded")
                 Log.w(TAG, "WhisperContext is null — no model loaded")
                 return
             }
 
             if (!audioPipeline.hasRecordPermission()) {
-                _transcribedText.value = "[Microphone permission required]"
+                _errorMessage.tryEmit("Microphone permission required")
                 Log.w(TAG, "RECORD_AUDIO permission not granted")
                 return
             }
