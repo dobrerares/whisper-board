@@ -1,0 +1,42 @@
+# Whisper Board
+
+Android STT (speech-to-text) keyboard using whisper.cpp via JNI.
+
+## Build
+
+```bash
+# Inside nix devshell (required on NixOS):
+nix develop --command bash -c './gradlew :app:assembleDebug -Pandroid.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/35.0.0/aapt2'
+
+# Or if ANDROID_HOME is available directly:
+./gradlew :app:assembleDebug
+
+# Kotlin compile only (faster iteration):
+./gradlew :app:compileDebugKotlin
+```
+
+## Architecture
+
+Two Gradle modules:
+- `:whisper` — JNI bridge to whisper.cpp (C++ via CMake, 3 ABIs: arm64-v8a, armeabi-v7a, x86_64)
+- `:app` — Android InputMethodService + Compose UI
+
+Key packages in `:app`:
+- `audio/` — AudioPipeline (mic recording)
+- `model/` — ModelInfo, ModelManifest, ModelRepository, LanguageRepository, WhisperLanguages, AppPreferences
+- `settings/` — SettingsActivity + SettingsScreen (Compose)
+- `ui/` — KeyboardScreen, KeyboardViewModel, LanguagePickerDialog, WaveformBar
+- `WhisperBoardIME.kt` — IME service entry point
+
+Native code: `third_party/whisper.cpp` (git submodule)
+
+## Gotchas
+
+- **NixOS aapt2**: Maven-downloaded aapt2 is dynamically linked and fails. Always pass `-Pandroid.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/35.0.0/aapt2`
+- **Submodules after branch operations**: Run `git submodule update --init --recursive` after checkout/merge/worktree creation
+- **Worktree removal with submodules**: `git worktree remove` fails — use `rm -rf <path> && git worktree prune`
+- **DataStore singleton**: `preferencesDataStore` must be a top-level extension property (one per file name per process). Always pass `applicationContext`, never activity context
+
+## Git
+
+Solo project — commit and push directly to main.
