@@ -2,12 +2,9 @@ package com.whisperboard.model
 
 import android.content.Context
 import android.util.Log
-import androidx.datastore.core.DataStore
-import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
-import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,8 +15,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
-
-private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "model_prefs")
 
 data class DownloadProgress(
     val bytesDownloaded: Long,
@@ -52,16 +47,16 @@ class ModelRepository(private val context: Context) {
 
     // --- Preferences ---
 
-    val downloadedModels: Flow<Set<String>> = context.dataStore.data.map { prefs ->
+    val downloadedModels: Flow<Set<String>> = context.appDataStore.data.map { prefs ->
         prefs[KEY_DOWNLOADED] ?: emptySet()
     }
 
-    val activeModelName: Flow<String?> = context.dataStore.data.map { prefs ->
+    val activeModelName: Flow<String?> = context.appDataStore.data.map { prefs ->
         prefs[KEY_ACTIVE]
     }
 
     suspend fun setActiveModel(name: String) {
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             prefs[KEY_ACTIVE] = name
         }
     }
@@ -73,7 +68,7 @@ class ModelRepository(private val context: Context) {
     fun isDownloaded(model: ModelInfo): Boolean = getModelFile(model).exists()
 
     suspend fun getActiveModelPath(): String? {
-        val name = context.dataStore.data.first()[KEY_ACTIVE] ?: return null
+        val name = context.appDataStore.data.first()[KEY_ACTIVE] ?: return null
         val model = ModelManifest.getByName(name) ?: return null
         val file = getModelFile(model)
         return if (file.exists()) file.absolutePath else null
@@ -133,7 +128,7 @@ class ModelRepository(private val context: Context) {
             }
 
             // Update preferences
-            context.dataStore.edit { prefs ->
+            context.appDataStore.edit { prefs ->
                 val current = prefs[KEY_DOWNLOADED] ?: emptySet()
                 prefs[KEY_DOWNLOADED] = current + model.name
             }
@@ -156,7 +151,7 @@ class ModelRepository(private val context: Context) {
         withContext(Dispatchers.IO) {
             getModelFile(model).delete()
         }
-        context.dataStore.edit { prefs ->
+        context.appDataStore.edit { prefs ->
             val current = prefs[KEY_DOWNLOADED] ?: emptySet()
             prefs[KEY_DOWNLOADED] = current - model.name
 
