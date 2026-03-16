@@ -64,53 +64,59 @@ class KeyboardViewModel(
         engineRouter = router
     }
 
+    fun startRecording() {
+        if (_isRecording.value) return
+        val router = engineRouter
+        if (router == null || !router.canTranscribe()) {
+            _errorMessage.tryEmit("No transcription engine available")
+            Log.w(TAG, "EngineRouter unavailable or no engine configured")
+            return
+        }
+        if (!audioPipeline.hasRecordPermission()) {
+            _errorMessage.tryEmit("Microphone permission required")
+            Log.w(TAG, "RECORD_AUDIO permission not granted")
+            return
+        }
+        audioPipeline.startRecording(viewModelScope)
+        _isRecording.value = true
+    }
+
+    fun stopRecording() {
+        if (!_isRecording.value) return
+        _isRecording.value = false
+        viewModelScope.launch {
+            try {
+                val samples = audioPipeline.stopRecording()
+                if (samples.isEmpty()) {
+                    Log.w(TAG, "No audio samples captured")
+                    return@launch
+                }
+                val router = engineRouter
+                if (router == null || !router.canTranscribe()) {
+                    _errorMessage.tryEmit("No transcription engine available")
+                    Log.w(TAG, "EngineRouter unavailable or no engine configured")
+                    return@launch
+                }
+                _isProcessing.value = true
+                val start = System.currentTimeMillis()
+                val text = router.transcribe(samples, activeLanguage.value)
+                val elapsed = System.currentTimeMillis() - start
+                Log.d(TAG, "Transcription done in ${elapsed}ms: \"$text\"")
+                _transcribedText.value = text
+            } catch (e: Exception) {
+                Log.e(TAG, "Transcription failed", e)
+                _errorMessage.tryEmit(e.message ?: "Transcription failed")
+            } finally {
+                _isProcessing.value = false
+            }
+        }
+    }
+
     fun toggleRecording() {
         if (_isRecording.value) {
-            _isRecording.value = false
-            viewModelScope.launch {
-                try {
-                    val samples = audioPipeline.stopRecording()
-                    if (samples.isEmpty()) {
-                        Log.w(TAG, "No audio samples captured")
-                        return@launch
-                    }
-
-                    val router = engineRouter
-                    if (router == null || !router.canTranscribe()) {
-                        _errorMessage.tryEmit("No transcription engine available")
-                        Log.w(TAG, "EngineRouter unavailable or no engine configured")
-                        return@launch
-                    }
-
-                    _isProcessing.value = true
-                    val start = System.currentTimeMillis()
-                    val text = router.transcribe(samples, activeLanguage.value)
-                    val elapsed = System.currentTimeMillis() - start
-                    Log.d(TAG, "Transcription done in ${elapsed}ms: \"$text\"")
-                    _transcribedText.value = text
-                } catch (e: Exception) {
-                    Log.e(TAG, "Transcription failed", e)
-                    _errorMessage.tryEmit(e.message ?: "Transcription failed")
-                } finally {
-                    _isProcessing.value = false
-                }
-            }
+            stopRecording()
         } else {
-            val router = engineRouter
-            if (router == null || !router.canTranscribe()) {
-                _errorMessage.tryEmit("No transcription engine available")
-                Log.w(TAG, "EngineRouter unavailable or no engine configured")
-                return
-            }
-
-            if (!audioPipeline.hasRecordPermission()) {
-                _errorMessage.tryEmit("Microphone permission required")
-                Log.w(TAG, "RECORD_AUDIO permission not granted")
-                return
-            }
-
-            audioPipeline.startRecording(viewModelScope)
-            _isRecording.value = true
+            startRecording()
         }
     }
 

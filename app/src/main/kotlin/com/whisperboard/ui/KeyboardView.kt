@@ -71,6 +71,8 @@ fun KeyboardScreen(
                     isRecording = isRecording,
                     isProcessing = isProcessing,
                     onToggle = { viewModel.toggleRecording() },
+                    onStartRecording = { viewModel.startRecording() },
+                    onStopRecording = { viewModel.stopRecording() },
                     modifier = Modifier.padding(vertical = 8.dp)
                 )
 
