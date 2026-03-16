@@ -31,6 +31,10 @@ fun SettingsScreen(
     imeSelected: Boolean = true,
     onOpenImeSettings: () -> Unit = {},
     onOpenImePicker: () -> Unit = {},
+    onPickFile: () -> Unit = {},
+    pendingFileName: String? = null,
+    pendingUri: android.net.Uri? = null,
+    onImportComplete: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val downloadedModels by modelRepository.downloadedModels.collectAsState(initial = emptySet())
@@ -38,7 +42,9 @@ fun SettingsScreen(
     val downloadingModel by modelRepository.downloadingModel.collectAsState(initial = null)
     val downloadProgress by modelRepository.downloadProgress.collectAsState(initial = null)
     val favoriteLanguages by languageRepository.favoriteLanguages.collectAsState(initial = emptySet())
+    val allModels by modelRepository.allModels.collectAsState(initial = ModelManifest.models)
     var modelToDelete by remember { mutableStateOf<ModelInfo?>(null) }
+    var showImportDialog by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
@@ -82,13 +88,15 @@ fun SettingsScreen(
                 )
             }
 
-            items(ModelManifest.models) { model ->
+            items(allModels, key = { it.name }) { model ->
                 ModelCard(
                     model = model,
                     isDownloaded = model.name in downloadedModels,
                     isActive = model.name == activeModelName,
                     isDownloading = model.name == downloadingModel,
                     progress = if (model.name == downloadingModel) downloadProgress else null,
+                    isCustom = model.isCustom,
+                    languageHint = model.languageHint,
                     onDownload = {
                         scope.launch {
                             val result = modelRepository.download(model)
@@ -113,6 +121,26 @@ fun SettingsScreen(
                         modelRepository.cancelDownload()
                     },
                 )
+            }
+
+            item {
+                OutlinedCard(
+                    onClick = { showImportDialog = true },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            text = "+ Import Model",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
             }
 
             // --- Transcription section ---
@@ -183,6 +211,47 @@ fun SettingsScreen(
                     Text("Cancel")
                 }
             },
+        )
+    }
+
+    if (showImportDialog) {
+        ImportModelDialog(
+            onDismiss = {
+                showImportDialog = false
+                onImportComplete()
+            },
+            onImportFile = { displayName, languageHint ->
+                showImportDialog = false
+                val uri = pendingUri ?: return@ImportModelDialog
+                scope.launch {
+                    val result = modelRepository.importFromFile(uri, displayName, languageHint)
+                    onImportComplete()
+                    result.onFailure { e ->
+                        snackbarHostState.showSnackbar(
+                            "Import failed: ${e.message ?: "Unknown error"}"
+                        )
+                    }
+                    result.onSuccess {
+                        snackbarHostState.showSnackbar("Model imported successfully")
+                    }
+                }
+            },
+            onImportUrl = { url, displayName, languageHint ->
+                showImportDialog = false
+                scope.launch {
+                    val result = modelRepository.importFromUrl(url, displayName, languageHint)
+                    result.onFailure { e ->
+                        snackbarHostState.showSnackbar(
+                            "Import failed: ${e.message ?: "Unknown error"}"
+                        )
+                    }
+                    result.onSuccess {
+                        snackbarHostState.showSnackbar("Model imported successfully")
+                    }
+                }
+            },
+            selectedFileName = pendingFileName,
+            onBrowseFile = onPickFile,
         )
     }
 }
@@ -438,6 +507,8 @@ private fun ModelCard(
     isActive: Boolean,
     isDownloading: Boolean,
     progress: DownloadProgress?,
+    isCustom: Boolean = false,
+    languageHint: String? = null,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onSelect: () -> Unit,
@@ -458,15 +529,38 @@ private fun ModelCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = model.displayName,
-                        style = MaterialTheme.typography.titleSmall
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = model.displayName,
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        if (isCustom) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = MaterialTheme.colorScheme.tertiaryContainer,
+                            ) {
+                                Text(
+                                    text = "Custom",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                    }
                     if (isActive) {
                         Text(
                             text = "Active",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    if (languageHint != null) {
+                        Text(
+                            text = WhisperLanguages.displayName(languageHint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
