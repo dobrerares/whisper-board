@@ -1,7 +1,14 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+}
+
+val localProps = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -22,14 +29,10 @@ android {
 
     signingConfigs {
         create("release") {
-            val props = project.rootProject.file("local.properties")
-                .takeIf { it.exists() }
-                ?.let { java.util.Properties().apply { load(it.inputStream()) } }
-
-            storeFile = file(System.getenv("KEYSTORE_FILE") ?: props?.getProperty("signing.storeFile") ?: "keystore.jks")
-            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: props?.getProperty("signing.storePassword") ?: ""
-            keyAlias = System.getenv("KEY_ALIAS") ?: props?.getProperty("signing.keyAlias") ?: ""
-            keyPassword = System.getenv("KEY_PASSWORD") ?: props?.getProperty("signing.keyPassword") ?: ""
+            storeFile = file(System.getenv("KEYSTORE_FILE") ?: localProps.getProperty("signing.storeFile", "keystore.jks"))
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: localProps.getProperty("signing.storePassword", "")
+            keyAlias = System.getenv("KEY_ALIAS") ?: localProps.getProperty("signing.keyAlias", "")
+            keyPassword = System.getenv("KEY_PASSWORD") ?: localProps.getProperty("signing.keyPassword", "")
         }
     }
 
