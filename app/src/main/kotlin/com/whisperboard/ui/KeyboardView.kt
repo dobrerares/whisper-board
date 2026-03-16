@@ -1,6 +1,7 @@
 package com.whisperboard.ui
 
 import android.view.inputmethod.InputConnection
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.whisperboard.ui.theme.WhisperBoardTheme
 
 @Composable
 fun KeyboardScreen(
@@ -30,7 +32,7 @@ fun KeyboardScreen(
     val favoriteLanguages by viewModel.favoriteLanguages.collectAsState()
     val waveformData by viewModel.waveformData.collectAsState()
 
-    MaterialTheme {
+    WhisperBoardTheme {
         val snackbarHostState = remember { SnackbarHostState() }
 
         LaunchedEffect(Unit) {
@@ -43,6 +45,7 @@ fun KeyboardScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(320.dp)
+                .background(MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(
                 modifier = Modifier

@@ -8,13 +8,14 @@ import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.transcription.ApiSettingsRepository
+import com.whisperboard.ui.theme.WhisperBoardTheme
 
 class SettingsActivity : ComponentActivity() {
 
@@ -39,8 +40,10 @@ class SettingsActivity : ComponentActivity() {
             permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
         }
 
+        enableEdgeToEdge()
+
         setContent {
-            MaterialTheme {
+            WhisperBoardTheme {
                 SettingsScreen(
                     modelRepository = repository,
                     languageRepository = languageRepository,
