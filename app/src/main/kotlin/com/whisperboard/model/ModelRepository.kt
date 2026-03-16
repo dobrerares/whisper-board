@@ -29,6 +29,7 @@ class ModelRepository(private val context: Context) {
         private const val TAG = "ModelRepository"
         private val KEY_DOWNLOADED = stringSetPreferencesKey("downloaded_models")
         private val KEY_ACTIVE = stringPreferencesKey("active_model")
+        private val KEY_CUSTOM_MODELS = stringPreferencesKey("custom_models")
     }
 
     private val client = OkHttpClient.Builder()
@@ -58,9 +59,33 @@ class ModelRepository(private val context: Context) {
         prefs[KEY_ACTIVE]
     }
 
+    val customModels: Flow<List<ModelInfo>> = context.appDataStore.data.map { prefs ->
+        val json = prefs[KEY_CUSTOM_MODELS] ?: ""
+        ModelInfo.listFromJson(json)
+    }
+
+    val allModels: Flow<List<ModelInfo>> = customModels.map { custom ->
+        ModelManifest.models + custom
+    }
+
     suspend fun setActiveModel(name: String) {
         context.appDataStore.edit { prefs ->
             prefs[KEY_ACTIVE] = name
+        }
+    }
+
+    suspend fun addCustomModel(model: ModelInfo) {
+        context.appDataStore.edit { prefs ->
+            val current = ModelInfo.listFromJson(prefs[KEY_CUSTOM_MODELS] ?: "")
+            prefs[KEY_CUSTOM_MODELS] = ModelInfo.listToJson(current + model)
+            prefs[KEY_DOWNLOADED] = (prefs[KEY_DOWNLOADED] ?: emptySet()) + model.name
+        }
+    }
+
+    private suspend fun removeCustomModel(name: String) {
+        context.appDataStore.edit { prefs ->
+            val current = ModelInfo.listFromJson(prefs[KEY_CUSTOM_MODELS] ?: "")
+            prefs[KEY_CUSTOM_MODELS] = ModelInfo.listToJson(current.filter { it.name != name })
         }
     }
 
@@ -71,10 +96,17 @@ class ModelRepository(private val context: Context) {
     fun isDownloaded(model: ModelInfo): Boolean = getModelFile(model).exists()
 
     suspend fun getActiveModelPath(): String? {
-        val name = context.appDataStore.data.first()[KEY_ACTIVE] ?: return null
-        val model = ModelManifest.getByName(name) ?: return null
+        val prefs = context.appDataStore.data.first()
+        val name = prefs[KEY_ACTIVE] ?: return null
+        val model = findModel(name, prefs) ?: return null
         val file = getModelFile(model)
         return if (file.exists()) file.absolutePath else null
+    }
+
+    private fun findModel(name: String, prefs: androidx.datastore.preferences.core.Preferences): ModelInfo? {
+        ModelManifest.getByName(name)?.let { return it }
+        val json = prefs[KEY_CUSTOM_MODELS] ?: ""
+        return ModelInfo.listFromJson(json).find { it.name == name }
     }
 
     // --- Download ---
@@ -166,10 +198,12 @@ class ModelRepository(private val context: Context) {
             val current = prefs[KEY_DOWNLOADED] ?: emptySet()
             prefs[KEY_DOWNLOADED] = current - model.name
 
-            // Clear active if this was the active model
             if (prefs[KEY_ACTIVE] == model.name) {
                 prefs.remove(KEY_ACTIVE)
             }
+        }
+        if (model.isCustom) {
+            removeCustomModel(model.name)
         }
         Log.d(TAG, "Deleted ${model.name}")
     }
