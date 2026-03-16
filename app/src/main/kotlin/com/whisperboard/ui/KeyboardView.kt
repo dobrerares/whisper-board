@@ -23,12 +23,13 @@ fun KeyboardScreen(
     val isProcessing by viewModel.isProcessing.collectAsState()
     val activeLanguage by viewModel.activeLanguage.collectAsState()
     val favoriteLanguages by viewModel.favoriteLanguages.collectAsState()
+    val waveformData by viewModel.waveformData.collectAsState()
 
     MaterialTheme {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(280.dp)
+                .height(320.dp)
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
@@ -51,6 +52,14 @@ fun KeyboardScreen(
                 isProcessing = isProcessing,
                 onToggle = { viewModel.toggleRecording() },
                 modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            WaveformBar(
+                waveformData = waveformData,
+                isRecording = isRecording,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
             )
 
             EditingKeysRow(
