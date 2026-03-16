@@ -25,6 +25,7 @@ Key packages in `:app`:
 - `audio/` — AudioPipeline (mic recording)
 - `model/` — ModelInfo, ModelManifest, ModelRepository, LanguageRepository, WhisperLanguages, AppPreferences
 - `settings/` — SettingsActivity + SettingsScreen (Compose)
+- `transcription/` — TranscriptionEngine, LocalEngine, ApiEngine, EngineRouter, ApiSettingsRepository, WavEncoder
 - `ui/` — KeyboardScreen, KeyboardViewModel, LanguagePickerDialog, WaveformBar
 - `WhisperBoardIME.kt` — IME service entry point
 
