@@ -265,10 +265,11 @@ class ModelRepository(private val context: Context) {
         )
 
         val result = download(model)
-        if (result.isSuccess) {
-            addCustomModel(model.copy(sizeBytes = result.getOrThrow().length()))
+        val updated = result.map { model.copy(sizeBytes = it.length()) }
+        if (updated.isSuccess) {
+            addCustomModel(updated.getOrThrow())
         }
-        return result.map { model }
+        return updated
     }
 
     suspend fun validateModel(model: ModelInfo): Boolean = withContext(Dispatchers.IO) {
