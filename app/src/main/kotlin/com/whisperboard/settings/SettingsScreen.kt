@@ -30,6 +30,7 @@ fun SettingsScreen(
     val downloadingModel by modelRepository.downloadingModel.collectAsState(initial = null)
     val downloadProgress by modelRepository.downloadProgress.collectAsState(initial = null)
     val favoriteLanguages by languageRepository.favoriteLanguages.collectAsState(initial = emptySet())
+    var modelToDelete by remember { mutableStateOf<ModelInfo?>(null) }
 
     Scaffold(
         topBar = {
@@ -63,7 +64,11 @@ fun SettingsScreen(
                         scope.launch { modelRepository.download(model) }
                     },
                     onDelete = {
-                        scope.launch { modelRepository.delete(model) }
+                        if (model.name == activeModelName) {
+                            modelToDelete = model
+                        } else {
+                            scope.launch { modelRepository.delete(model) }
+                        }
                     },
                     onSelect = {
                         scope.launch { modelRepository.setActiveModel(model.name) }
@@ -106,6 +111,27 @@ fun SettingsScreen(
                 )
             }
         }
+    }
+
+    modelToDelete?.let { model ->
+        AlertDialog(
+            onDismissRequest = { modelToDelete = null },
+            title = { Text("Delete Active Model?") },
+            text = { Text("\"${model.displayName}\" is currently in use. The keyboard will stop working until you select another model.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch { modelRepository.delete(model) }
+                    modelToDelete = null
+                }) {
+                    Text("Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { modelToDelete = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 }
 
