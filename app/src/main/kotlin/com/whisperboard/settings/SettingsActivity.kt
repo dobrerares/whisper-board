@@ -10,6 +10,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.core.content.ContextCompat
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.transcription.ApiSettingsRepository
 
 class SettingsActivity : ComponentActivity() {
 
@@ -23,6 +24,7 @@ class SettingsActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         repository = ModelRepository(applicationContext)
         val languageRepository = LanguageRepository(applicationContext)
+        val apiSettingsRepository = ApiSettingsRepository(applicationContext)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -35,6 +37,7 @@ class SettingsActivity : ComponentActivity() {
                 SettingsScreen(
                     modelRepository = repository,
                     languageRepository = languageRepository,
+                    apiSettingsRepository = apiSettingsRepository,
                 )
             }
         }

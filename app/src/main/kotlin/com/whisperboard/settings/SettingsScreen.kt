@@ -16,6 +16,9 @@ import com.whisperboard.model.ModelInfo
 import com.whisperboard.model.ModelManifest
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.model.WhisperLanguages
+import com.whisperboard.transcription.ApiProvider
+import com.whisperboard.transcription.ApiSettingsRepository
+import com.whisperboard.transcription.EngineStrategy
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -23,6 +26,7 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(
     modelRepository: ModelRepository,
     languageRepository: LanguageRepository,
+    apiSettingsRepository: ApiSettingsRepository,
 ) {
     val scope = rememberCoroutineScope()
     val downloadedModels by modelRepository.downloadedModels.collectAsState(initial = emptySet())
@@ -88,6 +92,19 @@ fun SettingsScreen(
                         modelRepository.cancelDownload()
                     },
                 )
+            }
+
+            // --- Transcription section ---
+            item {
+                Text(
+                    text = "Transcription",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                )
+            }
+
+            item {
+                TranscriptionSettingsSection(apiSettingsRepository = apiSettingsRepository)
             }
 
             // --- Languages section ---
@@ -182,6 +199,151 @@ private fun LanguageSettingsRow(
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TranscriptionSettingsSection(
+    apiSettingsRepository: ApiSettingsRepository,
+) {
+    val scope = rememberCoroutineScope()
+    val strategy by apiSettingsRepository.engineStrategy.collectAsState(initial = EngineStrategy.LOCAL_ONLY)
+    val provider by apiSettingsRepository.provider.collectAsState(initial = ApiProvider.OPENAI)
+    val customUrl by apiSettingsRepository.baseUrl.collectAsState(initial = "")
+    val customModel by apiSettingsRepository.model.collectAsState(initial = "")
+    val fallbackTimeout by apiSettingsRepository.fallbackTimeoutSeconds.collectAsState(initial = 15)
+    var apiKey by remember { mutableStateOf(apiSettingsRepository.getApiKey()) }
+
+    Column {
+        // Strategy selector
+        Text("Engine Strategy", style = MaterialTheme.typography.bodyMedium)
+        Spacer(modifier = Modifier.height(4.dp))
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            EngineStrategy.entries.forEachIndexed { index, s ->
+                SegmentedButton(
+                    selected = strategy == s,
+                    onClick = { scope.launch { apiSettingsRepository.setEngineStrategy(s) } },
+                    shape = SegmentedButtonDefaults.itemShape(index, EngineStrategy.entries.size),
+                ) {
+                    Text(
+                        text = when (s) {
+                            EngineStrategy.LOCAL_ONLY -> "Local"
+                            EngineStrategy.API_ONLY -> "API"
+                            EngineStrategy.LOCAL_PREFERRED -> "Local+API"
+                            EngineStrategy.API_WHEN_ONLINE -> "Auto"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+        }
+
+        // Strategy description
+        Text(
+            text = when (strategy) {
+                EngineStrategy.LOCAL_ONLY -> "Always use on-device model"
+                EngineStrategy.API_ONLY -> "Always use cloud API"
+                EngineStrategy.LOCAL_PREFERRED -> "Try local first, fall back to API on timeout"
+                EngineStrategy.API_WHEN_ONLINE -> "Use API when online, local when offline"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+        )
+
+        // API settings (hidden when LOCAL_ONLY)
+        if (strategy != EngineStrategy.LOCAL_ONLY) {
+            // Provider picker
+            var providerExpanded by remember { mutableStateOf(false) }
+            ExposedDropdownMenuBox(
+                expanded = providerExpanded,
+                onExpandedChange = { providerExpanded = it },
+            ) {
+                OutlinedTextField(
+                    value = provider.displayName,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("Provider") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = providerExpanded) },
+                    modifier = Modifier.menuAnchor().fillMaxWidth(),
+                )
+                ExposedDropdownMenu(
+                    expanded = providerExpanded,
+                    onDismissRequest = { providerExpanded = false },
+                ) {
+                    ApiProvider.entries.forEach { p ->
+                        DropdownMenuItem(
+                            text = { Text(p.displayName) },
+                            onClick = {
+                                scope.launch { apiSettingsRepository.setProvider(p) }
+                                providerExpanded = false
+                            },
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // API Key (shown for providers that need auth)
+            if (provider != ApiProvider.SELF_HOSTED) {
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = {
+                        apiKey = it
+                        apiSettingsRepository.setApiKey(it)
+                    },
+                    label = { Text("API Key") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Custom URL (shown for SELF_HOSTED and CUSTOM)
+            if (provider.isCustomUrl) {
+                OutlinedTextField(
+                    value = customUrl,
+                    onValueChange = { scope.launch { apiSettingsRepository.setBaseUrl(it) } },
+                    label = { Text("Base URL") },
+                    placeholder = { Text("https://your-server.com/v1/") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Custom model name (shown for CUSTOM only)
+            if (provider == ApiProvider.CUSTOM) {
+                OutlinedTextField(
+                    value = customModel,
+                    onValueChange = { scope.launch { apiSettingsRepository.setModel(it) } },
+                    label = { Text("Model Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Fallback timeout (shown for LOCAL_PREFERRED only)
+            if (strategy == EngineStrategy.LOCAL_PREFERRED) {
+                Text(
+                    text = "Fallback timeout: ${fallbackTimeout}s",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Slider(
+                    value = fallbackTimeout.toFloat(),
+                    onValueChange = {
+                        scope.launch { apiSettingsRepository.setFallbackTimeout(it.toInt()) }
+                    },
+                    valueRange = 5f..30f,
+                    steps = 24,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
     }
 }
