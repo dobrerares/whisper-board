@@ -18,6 +18,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -82,6 +84,7 @@ private fun RowScope.RepeatableEditKey(
     content: @Composable () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
 
     Surface(
         modifier = Modifier
@@ -92,10 +95,12 @@ private fun RowScope.RepeatableEditKey(
                 awaitEachGesture {
                     awaitFirstDown()
                     onAction()
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     var repeatJob: Job? = null
                     try {
                         repeatJob = scope.launch {
                             delay(repeatDelayMs)
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             while (true) {
                                 onAction()
                                 delay(repeatIntervalMs)
@@ -122,8 +127,12 @@ private fun RowScope.EditKey(
     weight: Float = 1f,
     content: @Composable () -> Unit
 ) {
+    val haptic = LocalHapticFeedback.current
     Surface(
-        onClick = onClick,
+        onClick = {
+            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
         modifier = Modifier
             .weight(weight)
             .height(44.dp)
