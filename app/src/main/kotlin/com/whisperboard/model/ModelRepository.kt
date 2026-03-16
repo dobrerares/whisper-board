@@ -77,8 +77,17 @@ class ModelRepository(private val context: Context) {
     suspend fun addCustomModel(model: ModelInfo) {
         context.appDataStore.edit { prefs ->
             val current = ModelInfo.listFromJson(prefs[KEY_CUSTOM_MODELS] ?: "")
-            prefs[KEY_CUSTOM_MODELS] = ModelInfo.listToJson(current + model)
-            prefs[KEY_DOWNLOADED] = (prefs[KEY_DOWNLOADED] ?: emptySet()) + model.name
+            val allNames = ModelManifest.models.map { it.displayName } +
+                current.map { it.displayName }
+            val deduped = if (model.displayName in allNames) {
+                var suffix = 2
+                while ("${model.displayName} ($suffix)" in allNames) suffix++
+                model.copy(displayName = "${model.displayName} ($suffix)")
+            } else {
+                model
+            }
+            prefs[KEY_CUSTOM_MODELS] = ModelInfo.listToJson(current + deduped)
+            prefs[KEY_DOWNLOADED] = (prefs[KEY_DOWNLOADED] ?: emptySet()) + deduped.name
         }
     }
 
@@ -220,9 +229,26 @@ class ModelRepository(private val context: Context) {
         val destFile = File(modelsDir, fileName)
 
         try {
+            // Query file size for progress reporting
+            val totalBytes = context.contentResolver.query(
+                uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+            } ?: 0L
+
+            _downloadingModel.value = "import"
+            _downloadProgress.value = DownloadProgress(0, totalBytes)
+
             context.contentResolver.openInputStream(uri)?.use { input ->
                 destFile.outputStream().use { output ->
-                    input.copyTo(output, bufferSize = 8192)
+                    val buffer = ByteArray(8192)
+                    var bytesRead: Long = 0
+                    var read: Int
+                    while (input.read(buffer).also { read = it } != -1) {
+                        output.write(buffer, 0, read)
+                        bytesRead += read
+                        _downloadProgress.value = DownloadProgress(bytesRead, totalBytes)
+                    }
                 }
             } ?: return@withContext Result.failure(Exception("Cannot open file"))
 
@@ -247,6 +273,9 @@ class ModelRepository(private val context: Context) {
         } catch (e: Exception) {
             destFile.delete()
             Result.failure(e)
+        } finally {
+            _downloadingModel.value = null
+            _downloadProgress.value = null
         }
     }
 

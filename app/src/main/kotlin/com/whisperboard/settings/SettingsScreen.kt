@@ -218,7 +218,6 @@ fun SettingsScreen(
         ImportModelDialog(
             onDismiss = {
                 showImportDialog = false
-                onImportComplete()
             },
             onImportFile = { displayName, languageHint ->
                 showImportDialog = false
