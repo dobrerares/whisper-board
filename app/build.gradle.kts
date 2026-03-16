@@ -20,6 +20,26 @@ android {
         }
     }
 
+    signingConfigs {
+        create("release") {
+            val props = project.rootProject.file("local.properties")
+                .takeIf { it.exists() }
+                ?.let { java.util.Properties().apply { load(it.inputStream()) } }
+
+            storeFile = file(System.getenv("KEYSTORE_FILE") ?: props?.getProperty("signing.storeFile") ?: "keystore.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: props?.getProperty("signing.storePassword") ?: ""
+            keyAlias = System.getenv("KEY_ALIAS") ?: props?.getProperty("signing.keyAlias") ?: ""
+            keyPassword = System.getenv("KEY_PASSWORD") ?: props?.getProperty("signing.keyPassword") ?: ""
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+
     buildFeatures {
         compose = true
     }

@@ -1,0 +1,121 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-nightly:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Check for changes since last nightly
+        id: changes
+        run: |
+          LAST_NIGHTLY=$(git tag -l "nightly-*" --sort=-creatordate | head -1)
+          if [ -n "$LAST_NIGHTLY" ]; then
+            CHANGES=$(git rev-list "$LAST_NIGHTLY"..HEAD --count)
+            if [ "$CHANGES" -eq 0 ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "No changes since $LAST_NIGHTLY, skipping build"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "$CHANGES commits since $LAST_NIGHTLY"
+            fi
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "No previous nightly tag found, building"
+          fi
+
+      - uses: actions/setup-java@v4
+        if: steps.changes.outputs.skip != 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        if: steps.changes.outputs.skip != 'true'
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        if: steps.changes.outputs.skip != 'true'
+        run: sdkmanager "ndk;26.1.10909125"
+
+      - name: Cache Gradle
+        if: steps.changes.outputs.skip != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle.kts', 'gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Decode keystore
+        if: steps.changes.outputs.skip != 'true'
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/keystore.jks
+
+      - name: Set nightly version
+        if: steps.changes.outputs.skip != 'true'
+        id: version
+        run: |
+          BASE_VERSION=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          NIGHTLY_VERSION="${BASE_VERSION}-nightly.$(date +%Y%m%d)"
+          echo "version=$NIGHTLY_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=nightly-$(date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "Building nightly: $NIGHTLY_VERSION"
+
+      - name: Build release APK
+        if: steps.changes.outputs.skip != 'true'
+        env:
+          KEYSTORE_FILE: keystore.jks
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew :app:assembleRelease
+
+      - name: Rename APK
+        if: steps.changes.outputs.skip != 'true'
+        run: |
+          mv app/build/outputs/apk/release/*.apk \
+            app/build/outputs/apk/release/whisper-board-${{ steps.version.outputs.version }}.apk
+
+      - name: Upload Actions artifact
+        if: steps.changes.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ steps.version.outputs.version }}
+          path: app/build/outputs/apk/release/whisper-board-${{ steps.version.outputs.version }}.apk
+          retention-days: 90
+
+      - name: Tag nightly
+        if: steps.changes.outputs.skip != 'true'
+        run: |
+          git tag -f "${{ steps.version.outputs.tag }}"
+          git push -f origin "${{ steps.version.outputs.tag }}"
+
+      - name: Update nightly pre-release
+        if: steps.changes.outputs.skip != 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: "Nightly (${{ steps.version.outputs.version }})"
+          prerelease: true
+          make_latest: false
+          body: |
+            Automated nightly build from `main` at ${{ github.sha }}.
+
+            **Version:** ${{ steps.version.outputs.version }}
+            **Date:** ${{ steps.version.outputs.tag }}
+
+            This is an unstable build for testing purposes.
+          files: app/build/outputs/apk/release/whisper-board-${{ steps.version.outputs.version }}.apk
