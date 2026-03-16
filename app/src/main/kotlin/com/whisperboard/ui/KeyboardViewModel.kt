@@ -55,6 +55,7 @@ class KeyboardViewModel(
     var currentImeAction: Int = EditorInfo.IME_ACTION_DONE
 
     fun setWhisperContext(context: WhisperContext?) {
+        whisperContext?.close()
         whisperContext = context
     }
 
@@ -154,8 +155,7 @@ class KeyboardViewModel(
      * the ViewModelStore, so onCleared() is never invoked by the framework.
      */
     fun cleanup() {
-        whisperContext?.close()
-        whisperContext = null
+        setWhisperContext(null)
     }
 
     override fun onCleared() {

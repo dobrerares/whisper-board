@@ -26,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
@@ -51,6 +52,7 @@ class WhisperBoardIME : InputMethodService(),
 
     private lateinit var audioPipeline: AudioPipeline
     private lateinit var languageRepository: LanguageRepository
+    private lateinit var modelRepository: ModelRepository
     private lateinit var viewModel: KeyboardViewModel
 
     override fun onCreate() {
@@ -62,21 +64,32 @@ class WhisperBoardIME : InputMethodService(),
         languageRepository = LanguageRepository(applicationContext)
         viewModel = KeyboardViewModel(audioPipeline, languageRepository)
 
-        val repository = ModelRepository(applicationContext)
+        modelRepository = ModelRepository(applicationContext)
 
         serviceScope.launch {
-            try {
-                val modelPath = repository.getActiveModelPath()
-                if (modelPath != null) {
+            modelRepository.activeModelName.collectLatest { modelName ->
+                try {
+                    // Close previous context
+                    viewModel.setWhisperContext(null)
+
+                    if (modelName == null) {
+                        Log.w(TAG, "No active model selected — open Settings to download one")
+                        return@collectLatest
+                    }
+
+                    val modelPath = modelRepository.getActiveModelPath()
+                    if (modelPath == null) {
+                        Log.w(TAG, "Active model $modelName not found on disk")
+                        return@collectLatest
+                    }
+
                     Log.d(TAG, "Loading Whisper model from $modelPath")
                     val ctx = WhisperContext.createContext(modelPath)
                     viewModel.setWhisperContext(ctx)
-                    Log.d(TAG, "Whisper model loaded")
-                } else {
-                    Log.w(TAG, "No active model selected — open Settings to download one")
+                    Log.d(TAG, "Whisper model loaded: $modelName")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to load Whisper model", e)
                 }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to load Whisper model", e)
             }
         }
     }
