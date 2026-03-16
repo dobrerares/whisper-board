@@ -27,6 +27,10 @@ fun SettingsScreen(
     modelRepository: ModelRepository,
     languageRepository: LanguageRepository,
     apiSettingsRepository: ApiSettingsRepository,
+    imeEnabled: Boolean = true,
+    imeSelected: Boolean = true,
+    onOpenImeSettings: () -> Unit = {},
+    onOpenImePicker: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     val downloadedModels by modelRepository.downloadedModels.collectAsState(initial = emptySet())
@@ -52,6 +56,18 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // --- Setup banner ---
+            if (!imeEnabled || !imeSelected) {
+                item {
+                    SetupBanner(
+                        imeEnabled = imeEnabled,
+                        imeSelected = imeSelected,
+                        onOpenImeSettings = onOpenImeSettings,
+                        onOpenImePicker = onOpenImePicker,
+                    )
+                }
+            }
+
             // --- Models section ---
             item {
                 Text(
@@ -199,6 +215,68 @@ private fun LanguageSettingsRow(
                     MaterialTheme.colorScheme.onSurfaceVariant
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun SetupBanner(
+    imeEnabled: Boolean,
+    imeSelected: Boolean,
+    onOpenImeSettings: () -> Unit,
+    onOpenImePicker: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Keyboard Setup",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Step 1: Enable
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = if (imeEnabled) "1. Enabled" else "1. Enable Whisper Board",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f),
+                )
+                if (!imeEnabled) {
+                    Button(onClick = onOpenImeSettings) {
+                        Text("Open Settings")
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Step 2: Select
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    text = if (imeSelected) "2. Selected" else "2. Select as active keyboard",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.weight(1f),
+                )
+                if (imeEnabled && !imeSelected) {
+                    Button(onClick = onOpenImePicker) {
+                        Text("Switch Keyboard")
+                    }
+                }
+            }
         }
     }
 }
