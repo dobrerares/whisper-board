@@ -1,6 +1,7 @@
 package com.whisperboard.whisper
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -33,9 +34,13 @@ class WhisperContext private constructor(private val modelPath: String) : Closea
     }
 
     override fun close() {
-        if (contextPtr != 0L) {
-            whisperLib.freeContext(contextPtr)
-            contextPtr = 0L
+        runBlocking {
+            mutex.withLock {
+                if (contextPtr != 0L) {
+                    whisperLib.freeContext(contextPtr)
+                    contextPtr = 0L
+                }
+            }
         }
     }
 
