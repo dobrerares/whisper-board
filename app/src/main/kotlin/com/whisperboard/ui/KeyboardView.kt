@@ -22,6 +22,7 @@ fun KeyboardScreen(
     val isRecording by viewModel.isRecording.collectAsState()
     val isProcessing by viewModel.isProcessing.collectAsState()
     val activeLanguage by viewModel.activeLanguage.collectAsState()
+    val favoriteLanguages by viewModel.favoriteLanguages.collectAsState()
 
     MaterialTheme {
         Column(
@@ -39,6 +40,9 @@ fun KeyboardScreen(
 
             LanguageChip(
                 language = activeLanguage,
+                favorites = favoriteLanguages,
+                onSelectLanguage = { viewModel.setLanguage(it) },
+                onToggleFavorite = { viewModel.toggleFavorite(it) },
                 modifier = Modifier.padding(vertical = 4.dp)
             )
 
