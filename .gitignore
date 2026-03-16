@@ -1,8 +1,27 @@
+# Nix / direnv
 .direnv/
 result
+
+# Gradle
 .gradle/
 build/
 local.properties
+
+# IDE
 *.iml
 .idea/
+
+# Worktrees
 .worktrees/
+
+# Android
+*.apk
+*.aab
+*.ap_
+*.dex
+captures/
+*.externalNativeBuild/
+.cxx/
+
+# Do NOT ignore third_party/whisper.cpp (git submodule, must be tracked)
+# !third_party/whisper.cpp

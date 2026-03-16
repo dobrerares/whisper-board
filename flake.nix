@@ -20,7 +20,8 @@
           platformToolsVersion = "35.0.2";
           buildToolsVersions = [ "35.0.0" ];
           platformVersions = [ "35" ];
-          includeNDK = false;
+          includeNDK = true;
+          ndkVersions = [ "26.1.10909125" ];
           includeEmulator = false;
         };
 
@@ -33,11 +34,13 @@
             pkgs.gradle
             pkgs.jdk17
             pkgs.kotlin
+            pkgs.cmake
           ];
 
           ANDROID_HOME = "${androidSdk}/libexec/android-sdk";
           ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
           JAVA_HOME = "${pkgs.jdk17}";
+          ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/26.1.10909125";
           GRADLE_OPTS = "-Dorg.gradle.daemon=true -Xmx2048m";
 
           shellHook = ''
