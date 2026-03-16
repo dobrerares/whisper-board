@@ -197,9 +197,16 @@ class WhisperBoardIME : InputMethodService(),
 
         override fun onAttachedToWindow() {
             val ime = this@WhisperBoardIME
-            setViewTreeLifecycleOwner(ime)
-            setViewTreeViewModelStoreOwner(ime)
-            setViewTreeSavedStateRegistryOwner(ime)
+
+            // Set owners on the IME window's decor view so Compose can find them
+            // when walking up the view tree from our ComposeView.
+            val decorView = ime.window?.window?.decorView
+            decorView?.let {
+                it.setViewTreeLifecycleOwner(ime)
+                it.setViewTreeViewModelStoreOwner(ime)
+                it.setViewTreeSavedStateRegistryOwner(ime)
+            }
+
             super.onAttachedToWindow()
         }
     }

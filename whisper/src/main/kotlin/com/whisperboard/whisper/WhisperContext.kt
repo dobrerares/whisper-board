@@ -22,7 +22,7 @@ class WhisperContext private constructor(private val modelPath: String) : Closea
 
     suspend fun transcribe(samples: FloatArray, language: String = "auto"): List<Segment> {
         return mutex.withLock {
-            withContext(Dispatchers.IO) {
+            withContext(Dispatchers.Default) {
                 check(contextPtr != 0L) { "Whisper context is not initialized or has been closed" }
                 whisperLib.fullTranscribe(contextPtr, samples, language)
                 val segmentCount = whisperLib.getTextSegmentCount(contextPtr)

@@ -25,6 +25,16 @@ set(
 
 find_library(LOG_LIB log)
 
+# Always optimize — ML inference is unusable at -O0.
+# Global flags so ggml (FetchContent) also gets -O3.
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
+
+# Enable ARM dotprod + fp16 for fast quantized inference (ARMv8.2+, ~2017 onwards).
+if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
+endif()
+
 include(FetchContent)
 
 add_library(
@@ -37,7 +47,6 @@ target_compile_definitions(whisper_jni PUBLIC GGML_USE_CPU)
 target_compile_definitions(whisper_jni PRIVATE WHISPER_VERSION="${WHISPER_VERSION}")
 
 if (NOT ${CMAKE_BUILD_TYPE} STREQUAL "Debug")
-    target_compile_options(whisper_jni PRIVATE -O3)
     target_compile_options(whisper_jni PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
     target_compile_options(whisper_jni PRIVATE -ffunction-sections -fdata-sections)
 

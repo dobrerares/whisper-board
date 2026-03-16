@@ -1,17 +1,20 @@
 package com.whisperboard.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -24,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.whisperboard.R
 import com.whisperboard.model.WhisperLanguages
 
@@ -51,11 +56,29 @@ fun LanguagePickerDialog(
     val favoriteEntries = filtered.filter { it.key in favorites }
     val otherEntries = filtered.filter { it.key !in favorites }
 
-    AlertDialog(
+    // Use Popup instead of AlertDialog — IME services can't create dialog windows.
+    Popup(
         onDismissRequest = onDismiss,
-        title = { Text("Select Language") },
-        text = {
-            Column {
+        properties = PopupProperties(focusable = true),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Select Language",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onDismiss) { Text("Close") }
+                }
+
                 TextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
@@ -67,7 +90,7 @@ fun LanguagePickerDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(400.dp)
+                        .weight(1f)
                         .padding(top = 8.dp)
                 ) {
                     // Auto-detect option
@@ -128,11 +151,8 @@ fun LanguagePickerDialog(
                     }
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
-        },
-    )
+        }
+    }
 }
 
 @Composable

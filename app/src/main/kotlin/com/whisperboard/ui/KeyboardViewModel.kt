@@ -83,7 +83,10 @@ class KeyboardViewModel(
                     }
 
                     _isProcessing.value = true
+                    val start = System.currentTimeMillis()
                     val text = router.transcribe(samples, activeLanguage.value)
+                    val elapsed = System.currentTimeMillis() - start
+                    Log.d(TAG, "Transcription done in ${elapsed}ms: \"$text\"")
                     _transcribedText.value = text
                 } catch (e: Exception) {
                     Log.e(TAG, "Transcription failed", e)
