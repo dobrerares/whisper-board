@@ -37,6 +37,9 @@ class ModelRepository(private val context: Context) {
         .build()
     private val modelsDir = File(context.filesDir, "models").also { it.mkdirs() }
 
+    @Volatile
+    private var activeCall: okhttp3.Call? = null
+
     // --- Download state ---
 
     private val _downloadProgress = MutableStateFlow<DownloadProgress?>(null)
@@ -87,7 +90,9 @@ class ModelRepository(private val context: Context) {
             Log.d(TAG, "Downloading ${model.name} from ${model.url}")
 
             val request = Request.Builder().url(model.url).build()
-            val response = client.newCall(request).execute()
+            val call = client.newCall(request)
+            activeCall = call
+            val response = call.execute()
 
             if (!response.isSuccessful) {
                 response.close()
@@ -140,9 +145,15 @@ class ModelRepository(private val context: Context) {
             tempFile.delete()
             Result.failure(e)
         } finally {
+            activeCall = null
             _downloadingModel.value = null
             _downloadProgress.value = null
         }
+    }
+
+    fun cancelDownload() {
+        activeCall?.cancel()
+        activeCall = null
     }
 
     // --- Delete ---

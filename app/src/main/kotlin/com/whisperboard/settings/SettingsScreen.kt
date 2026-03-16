@@ -73,6 +73,9 @@ fun SettingsScreen(
                     onSelect = {
                         scope.launch { modelRepository.setActiveModel(model.name) }
                     },
+                    onCancel = {
+                        modelRepository.cancelDownload()
+                    },
                 )
             }
 
@@ -182,6 +185,7 @@ private fun ModelCard(
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onSelect: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -213,7 +217,7 @@ private fun ModelCard(
 
                 when {
                     isDownloading -> {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        TextButton(onClick = onCancel) { Text("Cancel") }
                     }
                     isDownloaded && !isActive -> {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
