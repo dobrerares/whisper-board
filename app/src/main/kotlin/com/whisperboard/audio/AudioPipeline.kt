@@ -29,7 +29,8 @@ class AudioPipeline(private val context: Context) {
 
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
-    private var accumulatedSamples = mutableListOf<Short>()
+    private val lock = Any()
+    private var accumulatedChunks = mutableListOf<ShortArray>()
 
     private val _waveformData = MutableStateFlow(FloatArray(0))
     val waveformData: StateFlow<FloatArray> = _waveformData.asStateFlow()
@@ -82,10 +83,20 @@ class AudioPipeline(private val context: Context) {
             return
         }
 
-        accumulatedSamples = mutableListOf()
+        synchronized(lock) {
+            accumulatedChunks = mutableListOf()
+        }
         _isRecording.value = true
 
-        audioRecord?.startRecording()
+        try {
+            audioRecord?.startRecording()
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "Failed to start recording", e)
+            _isRecording.value = false
+            audioRecord?.release()
+            audioRecord = null
+            return
+        }
 
         recordingJob = scope.launch(Dispatchers.IO) {
             val readBuffer = ShortArray(minBufferSize)
@@ -95,16 +106,14 @@ class AudioPipeline(private val context: Context) {
                 val readCount = audioRecord?.read(readBuffer, 0, readBuffer.size) ?: break
 
                 if (readCount > 0) {
-                    synchronized(accumulatedSamples) {
-                        for (i in 0 until readCount) {
-                            accumulatedSamples.add(readBuffer[i])
-                        }
+                    val chunk = readBuffer.copyOfRange(0, readCount)
+                    synchronized(lock) {
+                        accumulatedChunks.add(chunk)
                     }
 
                     val now = System.currentTimeMillis()
                     if (now - lastWaveformEmit >= WAVEFORM_EMIT_INTERVAL_MS) {
                         lastWaveformEmit = now
-                        val chunk = readBuffer.copyOfRange(0, readCount)
                         _waveformData.value = shortsToFloats(chunk)
                     }
                 }
@@ -127,9 +136,16 @@ class AudioPipeline(private val context: Context) {
         audioRecord = null
 
         val samples: FloatArray
-        synchronized(accumulatedSamples) {
-            samples = shortsToFloats(accumulatedSamples.toShortArray())
-            accumulatedSamples.clear()
+        synchronized(lock) {
+            val totalSize = accumulatedChunks.sumOf { it.size }
+            val allSamples = ShortArray(totalSize)
+            var offset = 0
+            for (chunk in accumulatedChunks) {
+                chunk.copyInto(allSamples, offset)
+                offset += chunk.size
+            }
+            samples = shortsToFloats(allSamples)
+            accumulatedChunks.clear()
         }
 
         _waveformData.value = FloatArray(0)
@@ -144,11 +160,5 @@ class AudioPipeline(private val context: Context) {
         return FloatArray(shorts.size) { i ->
             shorts[i].toFloat() / Short.MAX_VALUE.toFloat()
         }
-    }
-
-    private fun MutableList<Short>.toShortArray(): ShortArray {
-        val array = ShortArray(size)
-        forEachIndexed { index, value -> array[index] = value }
-        return array
     }
 }

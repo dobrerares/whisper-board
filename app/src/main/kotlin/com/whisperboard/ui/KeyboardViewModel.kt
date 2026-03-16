@@ -29,6 +29,8 @@ class KeyboardViewModel : ViewModel() {
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
 
+    var currentImeAction: Int = EditorInfo.IME_ACTION_DONE
+
     fun toggleRecording() {
         // Will be wired to AudioPipeline in Task 4
         _isRecording.value = !_isRecording.value
@@ -51,7 +53,7 @@ class KeyboardViewModel : ViewModel() {
             EditAction.Period -> inputConnection.commitText(".", 1)
             EditAction.Enter -> {
                 // Try editor action first, fall back to newline
-                if (!inputConnection.performEditorAction(EditorInfo.IME_ACTION_DONE)) {
+                if (!inputConnection.performEditorAction(currentImeAction)) {
                     inputConnection.commitText("\n", 1)
                 }
             }

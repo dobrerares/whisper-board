@@ -46,6 +46,10 @@ class WhisperBoardIME : InputMethodService(),
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        if (info != null) {
+            viewModel.currentImeAction =
+                info.imeOptions and EditorInfo.IME_MASK_ACTION
+        }
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
