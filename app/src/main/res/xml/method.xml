@@ -2,11 +2,32 @@
 <input-method xmlns:android="http://schemas.android.com/apk/res/android"
     android:settingsActivity="com.whisperboard.settings.SettingsActivity">
     <subtype
-        android:label="English (US)"
-        android:imeSubtypeLocale="en_US"
-        android:imeSubtypeMode="voice" />
-    <subtype
         android:label="Auto-detect"
         android:imeSubtypeLocale=""
         android:imeSubtypeMode="voice" />
+    <subtype android:label="English" android:imeSubtypeLocale="en" android:imeSubtypeMode="voice" />
+    <subtype android:label="Chinese" android:imeSubtypeLocale="zh" android:imeSubtypeMode="voice" />
+    <subtype android:label="German" android:imeSubtypeLocale="de" android:imeSubtypeMode="voice" />
+    <subtype android:label="Spanish" android:imeSubtypeLocale="es" android:imeSubtypeMode="voice" />
+    <subtype android:label="Russian" android:imeSubtypeLocale="ru" android:imeSubtypeMode="voice" />
+    <subtype android:label="Korean" android:imeSubtypeLocale="ko" android:imeSubtypeMode="voice" />
+    <subtype android:label="French" android:imeSubtypeLocale="fr" android:imeSubtypeMode="voice" />
+    <subtype android:label="Japanese" android:imeSubtypeLocale="ja" android:imeSubtypeMode="voice" />
+    <subtype android:label="Portuguese" android:imeSubtypeLocale="pt" android:imeSubtypeMode="voice" />
+    <subtype android:label="Turkish" android:imeSubtypeLocale="tr" android:imeSubtypeMode="voice" />
+    <subtype android:label="Polish" android:imeSubtypeLocale="pl" android:imeSubtypeMode="voice" />
+    <subtype android:label="Catalan" android:imeSubtypeLocale="ca" android:imeSubtypeMode="voice" />
+    <subtype android:label="Dutch" android:imeSubtypeLocale="nl" android:imeSubtypeMode="voice" />
+    <subtype android:label="Arabic" android:imeSubtypeLocale="ar" android:imeSubtypeMode="voice" />
+    <subtype android:label="Swedish" android:imeSubtypeLocale="sv" android:imeSubtypeMode="voice" />
+    <subtype android:label="Italian" android:imeSubtypeLocale="it" android:imeSubtypeMode="voice" />
+    <subtype android:label="Indonesian" android:imeSubtypeLocale="id" android:imeSubtypeMode="voice" />
+    <subtype android:label="Hindi" android:imeSubtypeLocale="hi" android:imeSubtypeMode="voice" />
+    <subtype android:label="Finnish" android:imeSubtypeLocale="fi" android:imeSubtypeMode="voice" />
+    <subtype android:label="Vietnamese" android:imeSubtypeLocale="vi" android:imeSubtypeMode="voice" />
+    <subtype android:label="Hebrew" android:imeSubtypeLocale="he" android:imeSubtypeMode="voice" />
+    <subtype android:label="Ukrainian" android:imeSubtypeLocale="uk" android:imeSubtypeMode="voice" />
+    <subtype android:label="Greek" android:imeSubtypeLocale="el" android:imeSubtypeMode="voice" />
+    <subtype android:label="Malay" android:imeSubtypeLocale="ms" android:imeSubtypeMode="voice" />
+    <subtype android:label="Czech" android:imeSubtypeLocale="cs" android:imeSubtypeMode="voice" />
 </input-method>

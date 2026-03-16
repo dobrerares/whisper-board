@@ -50,6 +50,7 @@ class WhisperBoardIME : InputMethodService(),
         get() = savedStateRegistryController.savedStateRegistry
 
     private lateinit var audioPipeline: AudioPipeline
+    private lateinit var languageRepository: LanguageRepository
     private lateinit var viewModel: KeyboardViewModel
 
     override fun onCreate() {
@@ -58,7 +59,7 @@ class WhisperBoardIME : InputMethodService(),
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
 
         audioPipeline = AudioPipeline(this)
-        val languageRepository = LanguageRepository(applicationContext)
+        languageRepository = LanguageRepository(applicationContext)
         viewModel = KeyboardViewModel(audioPipeline, languageRepository)
 
         val repository = ModelRepository(applicationContext)
@@ -92,6 +93,18 @@ class WhisperBoardIME : InputMethodService(),
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
+    }
+
+    override fun onCurrentInputMethodSubtypeChanged(newSubtype: android.view.inputmethod.InputMethodSubtype?) {
+        super.onCurrentInputMethodSubtypeChanged(newSubtype)
+        val locale = newSubtype?.languageTag
+            ?: newSubtype?.locale
+            ?: ""
+        val langCode = if (locale.isEmpty()) "auto" else locale.take(2).lowercase()
+        Log.d(TAG, "IME subtype changed: $langCode")
+        serviceScope.launch {
+            languageRepository.setActiveLanguage(langCode)
+        }
     }
 
     override fun onCreateInputView(): View {
