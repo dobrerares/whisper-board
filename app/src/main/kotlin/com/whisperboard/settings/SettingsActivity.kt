@@ -8,6 +8,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material3.MaterialTheme
 import androidx.core.content.ContextCompat
+import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
 
 class SettingsActivity : ComponentActivity() {
@@ -21,8 +22,8 @@ class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repository = ModelRepository(applicationContext)
+        val languageRepository = LanguageRepository(applicationContext)
 
-        // Request RECORD_AUDIO permission if not granted
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -31,7 +32,10 @@ class SettingsActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                ModelManagerScreen(repository = repository)
+                SettingsScreen(
+                    modelRepository = repository,
+                    languageRepository = languageRepository,
+                )
             }
         }
     }
