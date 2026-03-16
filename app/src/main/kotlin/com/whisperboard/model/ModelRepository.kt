@@ -237,6 +237,11 @@ class ModelRepository(private val context: Context) {
                 languageHint = languageHint,
             )
 
+            if (!validateModel(model)) {
+                destFile.delete()
+                return@withContext Result.failure(Exception("Not a valid whisper model"))
+            }
+
             addCustomModel(model)
             Result.success(model)
         } catch (e: Exception) {
@@ -267,7 +272,12 @@ class ModelRepository(private val context: Context) {
         val result = download(model)
         val updated = result.map { model.copy(sizeBytes = it.length()) }
         if (updated.isSuccess) {
-            addCustomModel(updated.getOrThrow())
+            val imported = updated.getOrThrow()
+            if (!validateModel(imported)) {
+                withContext(Dispatchers.IO) { getModelFile(imported).delete() }
+                return Result.failure(Exception("Not a valid whisper model"))
+            }
+            addCustomModel(imported)
         }
         return updated
     }
