@@ -15,10 +15,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -90,7 +89,7 @@ fun MicButton(
         else -> 1f
     }
 
-    Box(
+    Surface(
         modifier = modifier
             .size(80.dp)
             .scale(scale)
@@ -133,18 +132,13 @@ fun MicButton(
                     }
                 }
             },
-        contentAlignment = Alignment.Center,
+        shape = CircleShape,
+        color = containerColor,
+        contentColor = contentColor,
     ) {
-        FloatingActionButton(
-            onClick = {}, // handled by pointerInput
+        Box(
             modifier = Modifier.size(80.dp),
-            shape = CircleShape,
-            containerColor = containerColor,
-            contentColor = contentColor,
-            elevation = FloatingActionButtonDefaults.elevation(
-                defaultElevation = 0.dp,
-                pressedElevation = 0.dp,
-            ),
+            contentAlignment = Alignment.Center,
         ) {
             when {
                 isProcessing -> {

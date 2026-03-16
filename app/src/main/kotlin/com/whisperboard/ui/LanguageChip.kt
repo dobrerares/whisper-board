@@ -1,9 +1,9 @@
 package com.whisperboard.ui
 
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.layout.height
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -12,7 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import com.whisperboard.model.WhisperLanguages
 
 @Composable
@@ -31,7 +30,8 @@ fun LanguageChip(
         WhisperLanguages.displayName(language)
     }
 
-    AssistChip(
+    FilterChip(
+        selected = language != "auto",
         onClick = { showPicker = true },
         label = {
             Text(
@@ -39,12 +39,19 @@ fun LanguageChip(
                 style = MaterialTheme.typography.labelSmall,
             )
         },
-        modifier = modifier.height(28.dp),
-        colors = AssistChipDefaults.assistChipColors(
+        modifier = modifier,
+        colors = FilterChipDefaults.filterChipColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+            selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
             labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer,
         ),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        border = FilterChipDefaults.filterChipBorder(
+            borderColor = MaterialTheme.colorScheme.outline,
+            selectedBorderColor = MaterialTheme.colorScheme.outline,
+            enabled = true,
+            selected = language != "auto",
+        ),
     )
 
     if (showPicker) {

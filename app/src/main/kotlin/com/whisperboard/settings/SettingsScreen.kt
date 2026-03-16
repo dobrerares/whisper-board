@@ -42,9 +42,6 @@ fun SettingsScreen(
     val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
-        topBar = {
-            TopAppBar(title = { Text("Whisper Board Settings") })
-        },
         snackbarHost = {
             SnackbarHost(hostState = snackbarHostState)
         }
@@ -56,6 +53,14 @@ fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item {
+                Text(
+                    text = "Whisper Board",
+                    style = MaterialTheme.typography.headlineMedium,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 8.dp),
+                )
+            }
+
             // --- Setup banner ---
             if (!imeEnabled || !imeSelected) {
                 item {

@@ -37,6 +37,10 @@ Native code: `third_party/whisper.cpp` (git submodule)
 - **Submodules after branch operations**: Run `git submodule update --init --recursive` after checkout/merge/worktree creation
 - **Worktree removal with submodules**: `git worktree remove` fails — use `rm -rf <path> && git worktree prune`
 - **DataStore singleton**: `preferencesDataStore` must be a top-level extension property (one per file name per process). Always pass `applicationContext`, never activity context
+- **Compose `pointerInput` vs `clickable`**: Never put `pointerInput` on a parent wrapping a `FloatingActionButton` or `Surface(onClick=...)` — the child's click handler steals events. Use a plain `Surface` (no onClick) with `pointerInput` directly
+- **Compose restricted coroutine scope**: `AwaitPointerEventScope` (inside `awaitEachGesture`) can't launch coroutines. Use `rememberCoroutineScope()` + `try/finally` for cancellation
+- **Android ActionBar**: App has no AppCompat dependency. XML theme is `android:Theme.Material.Light.NoActionBar` in `res/values/themes.xml`; all real theming is via Compose `WhisperBoardTheme`
+- **Material3 Compose has no XML theme resources**: `Theme.Material3.*` styles don't exist as XML resources — use `android:Theme.Material.*` as the XML base
 
 ## Git
 

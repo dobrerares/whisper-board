@@ -38,6 +38,9 @@ class KeyboardViewModel(
     @Volatile
     private var engineRouter: EngineRouter? = null
 
+    /** Language snapshot taken when recording starts — used for transcription. */
+    private var recordingLanguage: String = "auto"
+
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
@@ -77,6 +80,7 @@ class KeyboardViewModel(
             Log.w(TAG, "RECORD_AUDIO permission not granted")
             return
         }
+        recordingLanguage = activeLanguage.value
         audioPipeline.startRecording(viewModelScope)
         _isRecording.value = true
     }
@@ -99,7 +103,7 @@ class KeyboardViewModel(
                 }
                 _isProcessing.value = true
                 val start = System.currentTimeMillis()
-                val text = router.transcribe(samples, activeLanguage.value)
+                val text = router.transcribe(samples, recordingLanguage)
                 val elapsed = System.currentTimeMillis() - start
                 Log.d(TAG, "Transcription done in ${elapsed}ms: \"$text\"")
                 _transcribedText.value = text

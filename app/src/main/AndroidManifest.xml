@@ -6,7 +6,8 @@
 
     <application
         android:label="Whisper Board"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:theme="@style/Theme.WhisperBoard">
 
         <activity
             android:name=".settings.SettingsActivity"
