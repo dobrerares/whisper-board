@@ -28,6 +28,7 @@ class KeyboardViewModel(
         private const val TAG = "KeyboardViewModel"
     }
 
+    @Volatile
     private var whisperContext: WhisperContext? = null
 
     private val _isRecording = MutableStateFlow(false)

@@ -156,6 +156,16 @@ class AudioPipeline(private val context: Context) {
         return samples
     }
 
+    fun release() {
+        _isRecording.value = false
+        recordingJob?.cancel()
+        recordingJob = null
+        audioRecord?.stop()
+        audioRecord?.release()
+        audioRecord = null
+        _waveformData.value = FloatArray(0)
+    }
+
     private fun shortsToFloats(shorts: ShortArray): FloatArray {
         return FloatArray(shorts.size) { i ->
             shorts[i].toFloat() / Short.MAX_VALUE.toFloat()

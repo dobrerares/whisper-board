@@ -105,6 +105,7 @@ class WhisperBoardIME : InputMethodService(),
     override fun onDestroy() {
         super.onDestroy()
         serviceScope.cancel()
+        audioPipeline.release()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
     }

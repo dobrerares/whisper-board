@@ -42,9 +42,15 @@
           ANDROID_SDK_ROOT = "${androidSdk}/libexec/android-sdk";
           JAVA_HOME = "${pkgs.jdk17}";
           ANDROID_NDK_HOME = "${androidSdk}/libexec/android-sdk/ndk/26.1.10909125";
-          GRADLE_OPTS = "-Dorg.gradle.daemon=true -Xmx2048m -Dandroid.aapt2FromMavenOverride=${androidSdk}/libexec/android-sdk/build-tools/35.0.0/aapt2";
+          GRADLE_OPTS = "-Dorg.gradle.daemon=true -Xmx2048m";
 
           shellHook = ''
+            # Generate local.properties for Gradle (gitignored)
+            cat > local.properties <<PROPS
+            sdk.dir=$ANDROID_HOME
+            android.aapt2FromMavenOverride=$ANDROID_HOME/build-tools/35.0.0/aapt2
+            PROPS
+
             echo "🎙️ Whisper Board dev environment loaded"
             echo "  Android SDK: $ANDROID_HOME"
             echo "  Java:        $(java --version 2>&1 | head -1)"
