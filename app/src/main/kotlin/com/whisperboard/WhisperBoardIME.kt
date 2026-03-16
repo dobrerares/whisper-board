@@ -27,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
 
 class WhisperBoardIME : InputMethodService(),
@@ -57,7 +58,8 @@ class WhisperBoardIME : InputMethodService(),
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
 
         audioPipeline = AudioPipeline(this)
-        viewModel = KeyboardViewModel(audioPipeline)
+        val languageRepository = LanguageRepository(applicationContext)
+        viewModel = KeyboardViewModel(audioPipeline, languageRepository)
 
         val repository = ModelRepository(applicationContext)
 

@@ -6,10 +6,13 @@ import android.view.inputmethod.InputConnection
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.whisperboard.audio.AudioPipeline
+import com.whisperboard.model.LanguageRepository
 import com.whisperboard.whisper.WhisperContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed class EditAction {
@@ -22,6 +25,7 @@ sealed class EditAction {
 
 class KeyboardViewModel(
     private val audioPipeline: AudioPipeline,
+    private val languageRepository: LanguageRepository,
 ) : ViewModel() {
 
     companion object {
@@ -37,8 +41,11 @@ class KeyboardViewModel(
     private val _transcribedText = MutableStateFlow("")
     val transcribedText: StateFlow<String> = _transcribedText.asStateFlow()
 
-    private val _activeLanguage = MutableStateFlow("auto")
-    val activeLanguage: StateFlow<String> = _activeLanguage.asStateFlow()
+    val activeLanguage: StateFlow<String> = languageRepository.activeLanguage
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
+
+    val favoriteLanguages: StateFlow<Set<String>> = languageRepository.favoriteLanguages
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
@@ -71,7 +78,7 @@ class KeyboardViewModel(
                     }
 
                     _isProcessing.value = true
-                    val segments = ctx.transcribe(samples, _activeLanguage.value)
+                    val segments = ctx.transcribe(samples, activeLanguage.value)
                     _transcribedText.value = segments.joinToString(" ") { it.text.trim() }
                 } catch (e: Exception) {
                     Log.e(TAG, "Transcription failed", e)
@@ -120,6 +127,23 @@ class KeyboardViewModel(
                 if (!inputConnection.performEditorAction(currentImeAction)) {
                     inputConnection.commitText("\n", 1)
                 }
+            }
+        }
+    }
+
+    fun setLanguage(code: String) {
+        viewModelScope.launch {
+            languageRepository.setActiveLanguage(code)
+        }
+    }
+
+    fun toggleFavorite(code: String) {
+        viewModelScope.launch {
+            val current = favoriteLanguages.value
+            if (code in current) {
+                languageRepository.removeFavorite(code)
+            } else {
+                languageRepository.addFavorite(code)
             }
         }
     }
