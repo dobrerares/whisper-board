@@ -31,10 +31,14 @@ fun SettingsScreen(
     val downloadProgress by modelRepository.downloadProgress.collectAsState(initial = null)
     val favoriteLanguages by languageRepository.favoriteLanguages.collectAsState(initial = emptySet())
     var modelToDelete by remember { mutableStateOf<ModelInfo?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
 
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Whisper Board Settings") })
+        },
+        snackbarHost = {
+            SnackbarHost(hostState = snackbarHostState)
         }
     ) { padding ->
         LazyColumn(
@@ -61,7 +65,14 @@ fun SettingsScreen(
                     isDownloading = model.name == downloadingModel,
                     progress = if (model.name == downloadingModel) downloadProgress else null,
                     onDownload = {
-                        scope.launch { modelRepository.download(model) }
+                        scope.launch {
+                            val result = modelRepository.download(model)
+                            result.onFailure { e ->
+                                snackbarHostState.showSnackbar(
+                                    "Download failed: ${e.message ?: "Unknown error"}"
+                                )
+                            }
+                        }
                     },
                     onDelete = {
                         if (model.name == activeModelName) {

@@ -113,7 +113,7 @@ class WhisperBoardIME : InputMethodService(),
         val locale = newSubtype?.languageTag
             ?: newSubtype?.locale
             ?: ""
-        val langCode = if (locale.isEmpty()) "auto" else locale.take(2).lowercase()
+        val langCode = if (locale.isEmpty()) "auto" else locale.split("-").first().lowercase()
         Log.d(TAG, "IME subtype changed: $langCode")
         serviceScope.launch {
             languageRepository.setActiveLanguage(langCode)
