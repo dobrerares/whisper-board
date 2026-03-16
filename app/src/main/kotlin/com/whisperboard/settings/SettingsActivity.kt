@@ -23,10 +23,28 @@ class SettingsActivity : ComponentActivity() {
 
     private val imeEnabled = mutableStateOf(false)
     private val imeSelected = mutableStateOf(false)
+    private val pendingFileName = mutableStateOf<String?>(null)
+    private val pendingUri = mutableStateOf<android.net.Uri?>(null)
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* result handled implicitly — permission is now granted or denied */ }
+
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            pendingUri.value = uri
+            val cursor = contentResolver.query(uri, null, null, null, null)
+            val name = cursor?.use {
+                if (it.moveToFirst()) {
+                    val idx = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) it.getString(idx) else null
+                } else null
+            }
+            pendingFileName.value = name ?: uri.lastPathSegment ?: "unknown.bin"
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -56,6 +74,15 @@ class SettingsActivity : ComponentActivity() {
                     onOpenImePicker = {
                         val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
                         imm.showInputMethodPicker()
+                    },
+                    onPickFile = {
+                        filePickerLauncher.launch(arrayOf("*/*"))
+                    },
+                    pendingFileName = pendingFileName.value,
+                    pendingUri = pendingUri.value,
+                    onImportComplete = {
+                        pendingUri.value = null
+                        pendingFileName.value = null
                     },
                 )
             }
