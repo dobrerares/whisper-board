@@ -10,7 +10,7 @@ object ModelManifest {
             fileName = "ggml-tiny.bin",
             url = "$BASE_URL/ggml-tiny.bin",
             sizeBytes = 75_000_000L,
-            sha256 = "bd577a113a864445d4c299885e0cb97d4ba92b5f"
+            sha256 = ""
         ),
         ModelInfo(
             name = "base",
@@ -18,7 +18,7 @@ object ModelManifest {
             fileName = "ggml-base.bin",
             url = "$BASE_URL/ggml-base.bin",
             sizeBytes = 142_000_000L,
-            sha256 = "465707469ff3a37a2b9b8d8f89f2f99de7299b5d"
+            sha256 = ""
         ),
         ModelInfo(
             name = "small",
@@ -26,7 +26,7 @@ object ModelManifest {
             fileName = "ggml-small.bin",
             url = "$BASE_URL/ggml-small.bin",
             sizeBytes = 466_000_000L,
-            sha256 = "55356645c2b361a969dfd0ef2c5a50d530afd8d5"
+            sha256 = ""
         ),
     )
 

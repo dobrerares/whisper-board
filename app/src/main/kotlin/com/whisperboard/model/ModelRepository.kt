@@ -36,7 +36,10 @@ class ModelRepository(private val context: Context) {
         private val KEY_ACTIVE = stringPreferencesKey("active_model")
     }
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+        .build()
     private val modelsDir = File(context.filesDir, "models").also { it.mkdirs() }
 
     // --- Download state ---
@@ -92,6 +95,7 @@ class ModelRepository(private val context: Context) {
             val response = client.newCall(request).execute()
 
             if (!response.isSuccessful) {
+                response.close()
                 return@withContext Result.failure(Exception("Download failed: HTTP ${response.code}"))
             }
 
@@ -123,7 +127,10 @@ class ModelRepository(private val context: Context) {
                 }
             }
 
-            tempFile.renameTo(file)
+            if (!tempFile.renameTo(file)) {
+                tempFile.delete()
+                return@withContext Result.failure(Exception("Failed to move downloaded file into place"))
+            }
 
             // Update preferences
             context.dataStore.edit { prefs ->
