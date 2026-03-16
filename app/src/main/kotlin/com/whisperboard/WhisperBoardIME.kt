@@ -2,6 +2,7 @@ package com.whisperboard
 
 import android.content.Context
 import android.inputmethodservice.InputMethodService
+import android.net.ConnectivityManager
 import android.util.Log
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -19,6 +20,12 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.whisperboard.audio.AudioPipeline
+import com.whisperboard.model.LanguageRepository
+import com.whisperboard.model.ModelRepository
+import com.whisperboard.transcription.ApiEngine
+import com.whisperboard.transcription.ApiSettingsRepository
+import com.whisperboard.transcription.EngineRouter
+import com.whisperboard.transcription.LocalEngine
 import com.whisperboard.ui.KeyboardScreen
 import com.whisperboard.ui.KeyboardViewModel
 import com.whisperboard.whisper.WhisperContext
@@ -27,9 +34,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
-import com.whisperboard.model.LanguageRepository
-import com.whisperboard.model.ModelRepository
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 class WhisperBoardIME : InputMethodService(),
     LifecycleOwner,
@@ -53,7 +61,14 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var audioPipeline: AudioPipeline
     private lateinit var languageRepository: LanguageRepository
     private lateinit var modelRepository: ModelRepository
+    private lateinit var apiSettingsRepository: ApiSettingsRepository
+    private lateinit var engineRouter: EngineRouter
     private lateinit var viewModel: KeyboardViewModel
+
+    private val apiClient = OkHttpClient.Builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
 
     override fun onCreate() {
         super.onCreate()
@@ -62,15 +77,22 @@ class WhisperBoardIME : InputMethodService(),
 
         audioPipeline = AudioPipeline(this)
         languageRepository = LanguageRepository(applicationContext)
-        viewModel = KeyboardViewModel(audioPipeline, languageRepository)
-
         modelRepository = ModelRepository(applicationContext)
+        apiSettingsRepository = ApiSettingsRepository(applicationContext)
 
+        val connectivityManager =
+            getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        engineRouter = EngineRouter(apiSettingsRepository, connectivityManager)
+
+        viewModel = KeyboardViewModel(audioPipeline, languageRepository)
+        viewModel.setEngineRouter(engineRouter)
+
+        // Watch active model → update local engine
         serviceScope.launch {
             modelRepository.activeModelName.collectLatest { modelName ->
                 try {
-                    // Close previous context
-                    viewModel.setWhisperContext(null)
+                    engineRouter.localEngine?.close()
+                    engineRouter.localEngine = null
 
                     if (modelName == null) {
                         Log.w(TAG, "No active model selected — open Settings to download one")
@@ -85,12 +107,34 @@ class WhisperBoardIME : InputMethodService(),
 
                     Log.d(TAG, "Loading Whisper model from $modelPath")
                     val ctx = WhisperContext.createContext(modelPath)
-                    viewModel.setWhisperContext(ctx)
+                    engineRouter.localEngine = LocalEngine(ctx)
                     Log.d(TAG, "Whisper model loaded: $modelName")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to load Whisper model", e)
                 }
             }
+        }
+
+        // Watch API settings → rebuild API engine
+        serviceScope.launch {
+            combine(
+                apiSettingsRepository.provider,
+                apiSettingsRepository.baseUrl,
+                apiSettingsRepository.model,
+            ) { provider, baseUrl, model -> Triple(provider, baseUrl, model) }
+                .collectLatest {
+                    try {
+                        val config = apiSettingsRepository.resolveApiConfig()
+                        engineRouter.apiEngine = if (config != null) {
+                            ApiEngine(apiClient, config.baseUrl, config.apiKey, config.model)
+                        } else {
+                            null
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to configure API engine", e)
+                        engineRouter.apiEngine = null
+                    }
+                }
         }
     }
 
@@ -135,6 +179,7 @@ class WhisperBoardIME : InputMethodService(),
         super.onDestroy()
         serviceScope.cancel()
         viewModel.cleanup()
+        engineRouter.close()
         audioPipeline.release()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
