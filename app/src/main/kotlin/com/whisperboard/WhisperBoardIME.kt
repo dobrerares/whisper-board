@@ -27,7 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import java.io.File
+import com.whisperboard.model.ModelRepository
 
 class WhisperBoardIME : InputMethodService(),
     LifecycleOwner,
@@ -59,21 +59,22 @@ class WhisperBoardIME : InputMethodService(),
         audioPipeline = AudioPipeline(this)
         viewModel = KeyboardViewModel(audioPipeline)
 
-        // Load WhisperContext asynchronously
-        val modelPath = File(filesDir, "models/ggml-tiny.bin").absolutePath
-        val modelFile = File(modelPath)
-        if (modelFile.exists()) {
-            serviceScope.launch {
-                try {
+        val repository = ModelRepository(applicationContext)
+
+        serviceScope.launch {
+            try {
+                val modelPath = repository.getActiveModelPath()
+                if (modelPath != null) {
+                    Log.d(TAG, "Loading Whisper model from $modelPath")
                     val ctx = WhisperContext.createContext(modelPath)
                     viewModel.setWhisperContext(ctx)
-                    Log.i(TAG, "Whisper model loaded from $modelPath")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Failed to load Whisper model from $modelPath", e)
+                    Log.d(TAG, "Whisper model loaded")
+                } else {
+                    Log.w(TAG, "No active model selected — open Settings to download one")
                 }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to load Whisper model", e)
             }
-        } else {
-            Log.w(TAG, "Whisper model not found at $modelPath — mic transcription will be unavailable")
         }
     }
 
