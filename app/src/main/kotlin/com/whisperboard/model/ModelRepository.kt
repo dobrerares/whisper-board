@@ -208,6 +208,81 @@ class ModelRepository(private val context: Context) {
         Log.d(TAG, "Deleted ${model.name}")
     }
 
+    // --- Import ---
+
+    suspend fun importFromFile(
+        uri: android.net.Uri,
+        displayName: String,
+        languageHint: String?,
+    ): Result<ModelInfo> = withContext(Dispatchers.IO) {
+        val timestamp = System.currentTimeMillis()
+        val fileName = "custom_${timestamp}.bin"
+        val destFile = File(modelsDir, fileName)
+
+        try {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                destFile.outputStream().use { output ->
+                    input.copyTo(output, bufferSize = 8192)
+                }
+            } ?: return@withContext Result.failure(Exception("Cannot open file"))
+
+            val model = ModelInfo(
+                name = "custom_$timestamp",
+                displayName = displayName,
+                fileName = fileName,
+                url = "",
+                sizeBytes = destFile.length(),
+                sha256 = "",
+                isCustom = true,
+                languageHint = languageHint,
+            )
+
+            addCustomModel(model)
+            Result.success(model)
+        } catch (e: Exception) {
+            destFile.delete()
+            Result.failure(e)
+        }
+    }
+
+    suspend fun importFromUrl(
+        url: String,
+        displayName: String,
+        languageHint: String?,
+    ): Result<ModelInfo> {
+        val timestamp = System.currentTimeMillis()
+        val fileName = "custom_${timestamp}.bin"
+
+        val model = ModelInfo(
+            name = "custom_$timestamp",
+            displayName = displayName,
+            fileName = fileName,
+            url = url,
+            sizeBytes = 0L,
+            sha256 = "",
+            isCustom = true,
+            languageHint = languageHint,
+        )
+
+        val result = download(model)
+        if (result.isSuccess) {
+            addCustomModel(model.copy(sizeBytes = result.getOrThrow().length()))
+        }
+        return result.map { model }
+    }
+
+    suspend fun validateModel(model: ModelInfo): Boolean = withContext(Dispatchers.IO) {
+        val path = getModelFile(model).absolutePath
+        try {
+            val ctx = com.whisperboard.whisper.WhisperContext.createContext(path)
+            ctx.close()
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "Model validation failed for ${model.name}", e)
+            false
+        }
+    }
+
     // --- Util ---
 
     private fun sha256(file: File): String {
