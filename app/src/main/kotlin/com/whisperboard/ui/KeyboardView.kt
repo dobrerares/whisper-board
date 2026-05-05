@@ -32,6 +32,7 @@ fun KeyboardScreen(
     val favoriteLanguages by viewModel.favoriteLanguages.collectAsState()
     val waveformData by viewModel.waveformData.collectAsState()
     val polishUnavailable by viewModel.polishUnavailable.collectAsState()
+    val detectedLanguageFlash by viewModel.detectedLanguageFlash.collectAsState()
 
     WhisperBoardTheme {
         val snackbarHostState = remember { SnackbarHostState() }
@@ -79,7 +80,8 @@ fun KeyboardScreen(
                     favorites = favoriteLanguages,
                     onSelectLanguage = { viewModel.setLanguage(it) },
                     onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    modifier = Modifier.padding(vertical = 4.dp)
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    detectedFlash = detectedLanguageFlash,
                 )
 
                 MicButton(

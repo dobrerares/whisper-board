@@ -131,6 +131,7 @@ fun SettingsScreen(
             SettingsPage.History -> HistoryPage(modifier = Modifier.padding(padding))
             SettingsPage.Models -> ModelsPage(
                 modelRepository = modelRepository,
+                languageRepository = languageRepository,
                 snackbarHostState = snackbarHostState,
                 onPickFile = onPickFile,
                 pendingFileName = pendingFileName,
@@ -479,20 +480,70 @@ private fun LanguagesPage(
     languageRepository: LanguageRepository,
     modifier: Modifier = Modifier,
 ) {
-    // Slice #5 (issue #5) will add the language profile picker (the set of
-    // languages a user has declared they speak — consumed by the post-processor
-    // for code-switching context). Today this page hosts the favourite-language
-    // picker only.
+    // The Languages page hosts two independent concerns:
+    //
+    // - The **language profile** (slice #5 / issue #5) — the set of languages
+    //   the user has declared they speak. Consumed by the post-processor as
+    //   system-prompt context for code-switching recovery (per ADR-0003); not
+    //   passed to whisper.cpp. Editable post-onboarding here.
+    // - **Favourites** — the cosmetic IME picker subset. Independent of the
+    //   profile per CONTEXT.md.
     val scope = rememberCoroutineScope()
     val favoriteLanguages by languageRepository.favoriteLanguages
         .collectAsState(initial = emptySet())
+    val spokenLanguages by languageRepository.spokenLanguages
+        .collectAsState(initial = LanguageRepository.DEFAULT_SPOKEN_LANGUAGES)
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        // --- Language profile section ---
         item {
+            Text(
+                text = "Languages you speak",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = "Used by the post-processor to recover code-switched phrases " +
+                    "and to spell proper nouns correctly. Not passed to speech-to-text.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+        }
+        items(
+            WhisperLanguages.codes.entries.toList(),
+            key = { "profile-${it.key}" },
+        ) { (code, name) ->
+            LanguageProfileRow(
+                code = code,
+                displayName = name,
+                isInProfile = code in spokenLanguages,
+                onToggleProfile = {
+                    scope.launch {
+                        // Build the next set in-memory then write it back; the
+                        // repository collapses an empty set to the default so
+                        // we don't need to special-case "user unchecked the
+                        // last language".
+                        val next = if (code in spokenLanguages) {
+                            spokenLanguages - code
+                        } else {
+                            // Drop the `auto` sentinel as soon as the user
+                            // declares anything explicit — `auto` is the
+                            // empty-profile placeholder, not a declared
+                            // language.
+                            (spokenLanguages - "auto") + code
+                        }
+                        languageRepository.setSpokenLanguages(next)
+                    }
+                },
+            )
+        }
+
+        item {
+            HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
             Text(
                 text = "Favourites",
                 style = MaterialTheme.typography.titleMedium,
@@ -506,7 +557,7 @@ private fun LanguagesPage(
         }
         items(
             WhisperLanguages.codes.entries.toList(),
-            key = { "lang-${it.key}" },
+            key = { "fav-${it.key}" },
         ) { (code, name) ->
             LanguageSettingsRow(
                 code = code,
@@ -526,11 +577,40 @@ private fun LanguagesPage(
     }
 }
 
+@Composable
+private fun LanguageProfileRow(
+    code: String,
+    displayName: String,
+    isInProfile: Boolean,
+    onToggleProfile: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(
+            checked = isInProfile,
+            onCheckedChange = { onToggleProfile() },
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(text = displayName, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                text = code.uppercase(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
 // --- Models page ---
 
 @Composable
 private fun ModelsPage(
     modelRepository: ModelRepository,
+    languageRepository: LanguageRepository,
     snackbarHostState: SnackbarHostState,
     onPickFile: () -> Unit,
     pendingFileName: String?,
@@ -544,8 +624,15 @@ private fun ModelsPage(
     val downloadingModel by modelRepository.downloadingModel.collectAsState(initial = null)
     val downloadProgress by modelRepository.downloadProgress.collectAsState(initial = null)
     val allModels by modelRepository.allModels.collectAsState(initial = ModelManifest.models)
+    val spokenLanguages by languageRepository.spokenLanguages
+        .collectAsState(initial = LanguageRepository.DEFAULT_SPOKEN_LANGUAGES)
     var modelToDelete by remember { mutableStateOf<ModelInfo?>(null) }
     var showImportDialog by remember { mutableStateOf(false) }
+
+    // A profile is "multilingual" when the user has declared 2+ real languages.
+    // The `auto` sentinel is filtered out — `[auto, en]` is monolingual. This
+    // mirrors the PromptBuilder's gate for the code-switching recovery clause.
+    val isMultilingualProfile = spokenLanguages.count { it != "auto" } > 1
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -561,6 +648,7 @@ private fun ModelsPage(
                 progress = if (model.name == downloadingModel) downloadProgress else null,
                 isCustom = model.isCustom,
                 languageHint = model.languageHint,
+                showCodeSwitchingBadge = isMultilingualProfile && isCodeSwitchingFavoured(model),
                 onDownload = {
                     scope.launch {
                         val result = modelRepository.download(model)
@@ -1111,6 +1199,18 @@ private fun PostProcessingSettingsSection(
     }
 }
 
+/**
+ * Whether [model] is one of the whisper-large-v3 family that ADR-0003 calls
+ * out as the meaningfully better choice for code-switching. The badge in the
+ * model picker uses this. Match is by name substring so user-imported variants
+ * (e.g. `large-v3-turbo`, `large-v3-q5_0`) get the same hint as the canonical
+ * manifest entry, which keeps the badge useful even before a stock entry
+ * lands.
+ */
+private fun isCodeSwitchingFavoured(model: ModelInfo): Boolean =
+    model.name.contains("large-v3", ignoreCase = true) ||
+        model.displayName.contains("large-v3", ignoreCase = true)
+
 @Composable
 private fun ModelCard(
     model: ModelInfo,
@@ -1120,6 +1220,7 @@ private fun ModelCard(
     progress: DownloadProgress?,
     isCustom: Boolean = false,
     languageHint: String? = null,
+    showCodeSwitchingBadge: Boolean = false,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
     onSelect: () -> Unit,
@@ -1155,6 +1256,25 @@ private fun ModelCard(
                                     text = "Custom",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                )
+                            }
+                        }
+                        if (showCodeSwitchingBadge) {
+                            // Soft hint, not a hard block — users on weak
+                            // hardware should still be free to pick a smaller
+                            // model. The badge appears only when the user has
+                            // declared 2+ languages, so it's contextual and
+                            // unobtrusive for monolingual users.
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = MaterialTheme.shapes.extraSmall,
+                                color = MaterialTheme.colorScheme.secondaryContainer,
+                            ) {
+                                Text(
+                                    text = "Best for code-switching",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
                                 )
                             }

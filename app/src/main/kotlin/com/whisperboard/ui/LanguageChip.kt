@@ -21,17 +21,28 @@ fun LanguageChip(
     onSelectLanguage: (String) -> Unit,
     onToggleFavorite: (String) -> Unit,
     modifier: Modifier = Modifier,
+    /**
+     * When non-null, the chip flashes this language for ~1.5s after each
+     * utterance to give the user a "we just heard X" cue, then reverts to
+     * the persistent [language] selection. The persistent selection itself
+     * is unchanged — flashing is purely visual feedback.
+     */
+    detectedFlash: String? = null,
 ) {
     var showPicker by remember { mutableStateOf(false) }
 
-    val displayText = if (language == "auto") {
+    // Prefer the transient flash over the persistent selection so the user
+    // sees the detection result. When the flash subsides we drop back to
+    // whatever the chip was on (auto by default).
+    val displayLanguage = detectedFlash ?: language
+    val displayText = if (displayLanguage == "auto") {
         "Auto-detect"
     } else {
-        WhisperLanguages.displayName(language)
+        WhisperLanguages.displayName(displayLanguage)
     }
 
     FilterChip(
-        selected = language != "auto",
+        selected = displayLanguage != "auto",
         onClick = { showPicker = true },
         label = {
             Text(
@@ -50,7 +61,7 @@ fun LanguageChip(
             borderColor = MaterialTheme.colorScheme.outline,
             selectedBorderColor = MaterialTheme.colorScheme.outline,
             enabled = true,
-            selected = language != "auto",
+            selected = displayLanguage != "auto",
         ),
     )
 
