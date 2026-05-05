@@ -11,6 +11,8 @@ import com.whisperboard.postprocessing.PostProcessingContext
 import com.whisperboard.postprocessing.PostProcessingOutcome
 import com.whisperboard.postprocessing.PostProcessingRouter
 import com.whisperboard.transcription.EngineRouter
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -38,10 +40,19 @@ class KeyboardViewModel(
      * real `BehaviorSettingsRepository` flow through.
      */
     autoInsertEnabledProvider: suspend () -> Boolean = { true },
+    /**
+     * How long the active-language chip flashes the *detected* language after
+     * each utterance before reverting to the user's selected state. Pulled
+     * out as a constructor parameter so tests can collapse it to zero.
+     */
+    private val detectedLanguageFlashMs: Long = DETECTED_FLASH_MS_DEFAULT,
 ) : ViewModel() {
 
     companion object {
         private const val TAG = "KeyboardViewModel"
+
+        /** Default flash duration (~1.5s per the slice 5 brief). */
+        const val DETECTED_FLASH_MS_DEFAULT: Long = 1_500L
     }
 
     @Volatile
@@ -52,6 +63,10 @@ class KeyboardViewModel(
 
     /** Language snapshot taken when recording starts — used for transcription. */
     private var recordingLanguage: String = "auto"
+
+    /** Coroutine job for the chip's "detected language" flash; cancelled per utterance. */
+    @Volatile
+    private var flashJob: Job? = null
 
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
@@ -87,6 +102,38 @@ class KeyboardViewModel(
 
     val favoriteLanguages: StateFlow<Set<String>> = languageRepository.favoriteLanguages
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    /**
+     * The user's declared **language profile** — the set of languages they
+     * speak. Sourced from [LanguageRepository.spokenLanguages]. Consumed
+     * unconditionally by [PostProcessingContext] so the post-processor's
+     * system prompt can do code-switching recovery and proper-noun spelling.
+     * Independent of [activeLanguage] — pinning the chip does not touch the
+     * profile (per CONTEXT.md and ADR-0003).
+     */
+    val spokenLanguages: StateFlow<Set<String>> = languageRepository.spokenLanguages
+        .stateIn(
+            viewModelScope,
+            SharingStarted.Eagerly,
+            LanguageRepository.DEFAULT_SPOKEN_LANGUAGES,
+        )
+
+    /**
+     * Transient state for the active-language chip's "I just detected X" flash.
+     * Non-null for [detectedLanguageFlashMs] after each utterance, then nulled
+     * out. The chip composable prefers this value over [activeLanguage] when
+     * non-null. Detection visibility builds trust; the chip's persistent
+     * selection is unchanged.
+     *
+     * NOTE: whisper.cpp's per-segment detected-language metadata is not
+     * exposed through the JNI bridge today, so we flash whatever the chip
+     * selection was — `auto` for the auto-detect case, the pinned code
+     * otherwise. A real per-utterance readout is a follow-up; the contract
+     * (a flash exists, lasts ~1.5s, reverts) is in place so the wiring is
+     * unchanged when the metadata lands.
+     */
+    private val _detectedLanguageFlash = MutableStateFlow<String?>(null)
+    val detectedLanguageFlash: StateFlow<String?> = _detectedLanguageFlash.asStateFlow()
 
     private val _isProcessing = MutableStateFlow(false)
     val isProcessing: StateFlow<Boolean> = _isProcessing.asStateFlow()
@@ -146,6 +193,12 @@ class KeyboardViewModel(
                 val elapsed = System.currentTimeMillis() - start
                 Log.d(TAG, "Transcription done in ${elapsed}ms: \"$rawTranscript\"")
 
+                // Flash the chip with the language we asked Whisper to use.
+                // When the chip is on auto, we don't yet know what was
+                // detected (segment metadata not surfaced through JNI); we
+                // still flash so the user sees the chip behave consistently.
+                flashDetectedLanguage(recordingLanguage)
+
                 val finalText = polishIfEnabled(rawTranscript)
                 delivery.deliver(finalText)
             } catch (e: Exception) {
@@ -181,10 +234,30 @@ class KeyboardViewModel(
     }
 
     /**
+     * Surface a transient flash of the detected language on the chip. The
+     * chip composable prefers this value over the persistent [activeLanguage]
+     * when non-null. Cancels any previous flash so a quick succession of
+     * utterances doesn't pile up overlapping reverts.
+     */
+    private fun flashDetectedLanguage(language: String) {
+        flashJob?.cancel()
+        flashJob = viewModelScope.launch {
+            _detectedLanguageFlash.value = language
+            delay(detectedLanguageFlashMs)
+            _detectedLanguageFlash.value = null
+        }
+    }
+
+    /**
      * Run the raw transcript through the post-processor when one is wired and
      * polish mode is on. Returns the raw transcript unchanged when polish is
      * skipped or fails — words are never lost. Updates [polishUnavailable]
      * so the UI can show a small indicator when fallback occurred.
+     *
+     * The user's declared language profile flows through here:
+     * `spokenLanguages.value` -> `PostProcessingContext` -> `PromptBuilder`
+     * -> the LLM's system prompt. This is the entire profile-to-LLM data
+     * path that ADR-0003 spells out.
      */
     private suspend fun polishIfEnabled(rawTranscript: String): String {
         val postRouter = postProcessingRouter ?: run {
@@ -193,7 +266,9 @@ class KeyboardViewModel(
         }
         val outcome = postRouter.polish(
             rawTranscript = rawTranscript,
-            context = PostProcessingContext(),
+            context = PostProcessingContext(
+                languageProfile = spokenLanguages.value,
+            ),
         )
         return when (outcome) {
             is PostProcessingOutcome.Polished -> {
