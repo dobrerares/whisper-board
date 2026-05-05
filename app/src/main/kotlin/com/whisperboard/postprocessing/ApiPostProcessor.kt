@@ -21,7 +21,7 @@ import org.json.JSONObject
  * [PostProcessingException]; [PostProcessingRouter] catches that and falls
  * back to the raw transcript silently.
  */
-class ApiPostProcessor(
+open class ApiPostProcessor(
     private val client: OkHttpClient,
     private val baseUrl: String,
     private val apiKey: String,

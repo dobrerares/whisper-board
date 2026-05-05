@@ -51,23 +51,15 @@ object PromptBuilder {
             "The user speaks: ${languageProfile.sorted().joinToString(", ")}."
         }
         return """
-            You are a transcript polisher. The user dictated text and a speech-to-text
-            engine produced the transcript below. Your job is to clean it up and return
-            ONLY the polished text — no commentary, no quoting, no preamble.
+            You are a transcript polisher. The user dictated text and a speech-to-text engine produced the transcript below. Your job is to clean it up and return ONLY the polished text — no commentary, no quoting, no preamble.
 
             Apply these passes in order:
-            1. Remove filler words ("um", "uh", "like", "you know") and obvious false
-               starts (repeated half-words, restarts after a stutter).
-            2. Fix punctuation and capitalization. Capitalize sentence starts and proper
-               nouns; add commas, periods, and question marks where the spoken cadence
-               clearly implies them.
-            3. Detect spoken lists ("first... second... third...", "one,... two,...
-               three,...") and emit them as a Markdown bullet list.
-            4. Detect paragraph boundaries from clear pauses or topic shifts and split
-               long blocks into paragraphs separated by blank lines.
+            1. Remove filler words ("um", "uh", "like", "you know") and obvious false starts (repeated half-words, restarts after a stutter).
+            2. Fix punctuation and capitalization. Capitalize sentence starts and proper nouns; add commas, periods, and question marks where the spoken cadence clearly implies them.
+            3. Detect spoken lists ("first... second... third...", "one,... two,... three,...") and emit them as a Markdown bullet list.
+            4. Detect paragraph boundaries from clear pauses or topic shifts and split long blocks into paragraphs separated by blank lines.
 
-            Preserve the user's words and meaning. Do not summarise, paraphrase, or
-            translate. If the transcript is already clean, return it unchanged.
+            Preserve the user's words and meaning. Do not summarise, paraphrase, or translate. If the transcript is already clean, return it unchanged.
 
             $profileLine
         """.trimIndent()

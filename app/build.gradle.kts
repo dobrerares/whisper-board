@@ -55,6 +55,15 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    testOptions {
+        unitTests {
+            // android.util.Log and other stubs return zero/null instead of
+            // throwing — lets our Kotlin code under test call Log.d/Log.w
+            // freely without having to mock the framework.
+            isReturnDefaultValues = true
+        }
+    }
 }
 
 dependencies {
@@ -74,4 +83,9 @@ dependencies {
     implementation(libs.androidx.datastore.preferences)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.org.json)
 }
