@@ -25,6 +25,9 @@ import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.LlmModelRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.model.history.DictationHistoryRepository
+import com.whisperboard.model.history.HistorySettingsRepository
+import com.whisperboard.model.history.WhisperBoardDatabase
 import com.whisperboard.postprocessing.ApiPostProcessor
 import com.whisperboard.postprocessing.LocalPostProcessor
 import com.whisperboard.postprocessing.PostProcessingRouter
@@ -73,6 +76,8 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var apiSettingsRepository: ApiSettingsRepository
     private lateinit var postProcessingSettings: PostProcessingSettingsRepository
     private lateinit var behaviorSettings: BehaviorSettingsRepository
+    private lateinit var historySettings: HistorySettingsRepository
+    private lateinit var historyRepository: DictationHistoryRepository
     private lateinit var engineRouter: EngineRouter
     private lateinit var postProcessingRouter: PostProcessingRouter
     private lateinit var connectivityManager: ConnectivityManager
@@ -95,6 +100,11 @@ class WhisperBoardIME : InputMethodService(),
         apiSettingsRepository = ApiSettingsRepository(applicationContext)
         postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
         behaviorSettings = BehaviorSettingsRepository(applicationContext)
+        historySettings = HistorySettingsRepository(applicationContext)
+        historyRepository = DictationHistoryRepository(
+            dao = WhisperBoardDatabase.getInstance(applicationContext).dictationHistoryDao(),
+            retentionProvider = { historySettings.retention.first() },
+        )
 
         connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -109,6 +119,13 @@ class WhisperBoardIME : InputMethodService(),
             audioPipeline = audioPipeline,
             languageRepository = languageRepository,
             autoInsertEnabledProvider = { behaviorSettings.autoInsertEnabled.first() },
+            // Surface the focused field's owning package name so each
+            // persisted entry can record where the words went. The IME has
+            // `currentInputEditorInfo` available between onStartInput/onFinishInput.
+            targetAppNameProvider = { currentInputEditorInfo?.packageName },
+            historyRepository = historyRepository,
+            historySettings = historySettings,
+            behaviorSettings = behaviorSettings,
         )
         viewModel.setEngineRouter(engineRouter)
         viewModel.setPostProcessingRouter(postProcessingRouter)
@@ -174,14 +191,20 @@ class WhisperBoardIME : InputMethodService(),
             }
         }
 
-        // Watch API settings → rebuild API engine + API post-processor
+        // Watch API settings + the privacy "send transcripts to LLM" toggle.
+        // The toggle gates only the post-processor (the LLM polish stage);
+        // transcription is allowed to keep using the API since that's the
+        // user's chosen STT backend, not the polish surface.
         serviceScope.launch {
             combine(
                 apiSettingsRepository.provider,
                 apiSettingsRepository.baseUrl,
                 apiSettingsRepository.model,
-            ) { provider, baseUrl, model -> Triple(provider, baseUrl, model) }
-                .collectLatest {
+                historySettings.sendTranscriptsToRemoteLlm,
+            ) { provider, baseUrl, model, sendToLlm ->
+                ApiAndLlmConfig(provider, baseUrl, model, sendToLlm)
+            }
+                .collectLatest { state ->
                     try {
                         val config = apiSettingsRepository.resolveApiConfig()
                         engineRouter.apiEngine = if (config != null) {
@@ -191,10 +214,11 @@ class WhisperBoardIME : InputMethodService(),
                         }
                         // The post-processor reuses the same base URL + API key but
                         // talks to /chat/completions with a chat-capable model.
-                        // The transcription `model` field is a Whisper model and
-                        // is not appropriate here, so we pick a sensible chat
-                        // default per provider.
-                        postProcessingRouter.apiPostProcessor = if (config != null) {
+                        // Gate it on both the API config and the privacy
+                        // toggle: when "send transcripts to remote LLM" is
+                        // off, leave the post-processor null so the router
+                        // falls back to the raw transcript.
+                        postProcessingRouter.apiPostProcessor = if (config != null && state.sendToLlm) {
                             ApiPostProcessor(
                                 client = apiClient,
                                 baseUrl = config.baseUrl,
@@ -218,6 +242,18 @@ class WhisperBoardIME : InputMethodService(),
         val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
         return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
+
+    /**
+     * Combine result for API config + the "send to LLM" toggle. A `combine`
+     * with four sources doesn't have a built-in tuple, so a tiny named
+     * record keeps the call site readable.
+     */
+    private data class ApiAndLlmConfig(
+        val provider: com.whisperboard.transcription.ApiProvider,
+        val baseUrl: String,
+        val model: String,
+        val sendToLlm: Boolean,
+    )
 
     /**
      * Default chat-completions model for each provider. Used by the

@@ -26,11 +26,15 @@ import com.whisperboard.model.ModelInfo
 import com.whisperboard.model.ModelManifest
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.model.WhisperLanguages
+import com.whisperboard.model.history.DictationHistoryRepository
+import com.whisperboard.model.history.HistoryRetention
+import com.whisperboard.model.history.HistorySettingsRepository
 import com.whisperboard.postprocessing.PostProcessingSettingsRepository
 import com.whisperboard.postprocessing.PostProcessingStrategy
 import com.whisperboard.transcription.ApiProvider
 import com.whisperboard.transcription.ApiSettingsRepository
 import com.whisperboard.transcription.EngineStrategy
+import com.whisperboard.ui.DictationHistoryView
 import kotlinx.coroutines.launch
 
 /**
@@ -72,6 +76,8 @@ fun SettingsScreen(
     postProcessingSettingsRepository: PostProcessingSettingsRepository,
     behaviorSettingsRepository: BehaviorSettingsRepository,
     bubbleSettingsRepository: BubbleSettingsRepository,
+    historySettingsRepository: HistorySettingsRepository,
+    dictationHistoryRepository: DictationHistoryRepository,
     imeEnabled: Boolean = true,
     imeSelected: Boolean = true,
     overlayPermissionGranted: Boolean = false,
@@ -127,12 +133,19 @@ fun SettingsScreen(
                 onStopBubbleService = onStopBubbleService,
                 modifier = Modifier.padding(padding),
             )
-            SettingsPage.Privacy -> PrivacyPage(modifier = Modifier.padding(padding))
+            SettingsPage.Privacy -> PrivacyPage(
+                historySettingsRepository = historySettingsRepository,
+                dictationHistoryRepository = dictationHistoryRepository,
+                modifier = Modifier.padding(padding),
+            )
             SettingsPage.Languages -> LanguagesPage(
                 languageRepository = languageRepository,
                 modifier = Modifier.padding(padding),
             )
-            SettingsPage.History -> HistoryPage(modifier = Modifier.padding(padding))
+            SettingsPage.History -> HistoryPage(
+                dictationHistoryRepository = dictationHistoryRepository,
+                modifier = Modifier.padding(padding),
+            )
             SettingsPage.Models -> ModelsPage(
                 modelRepository = modelRepository,
                 languageRepository = languageRepository,
@@ -440,41 +453,165 @@ private fun BubbleModeRow(
     }
 }
 
-// --- Privacy page (skeleton — slice #6b populates this) ---
+// --- Privacy page ---
 
 @Composable
-private fun PrivacyPage(modifier: Modifier = Modifier) {
-    // Slice #6b (issue #8) will populate this with retention picker,
-    // "send transcripts to LLM" toggle, and "log diagnostics" toggle.
-    SkeletonPage(
-        modifier = modifier,
-        message = "Privacy controls arrive in a future update.",
-    )
-}
+private fun PrivacyPage(
+    historySettingsRepository: HistorySettingsRepository,
+    dictationHistoryRepository: DictationHistoryRepository,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    val retention by historySettingsRepository.retention
+        .collectAsState(initial = HistorySettingsRepository.DEFAULT_RETENTION)
+    val sendToLlm by historySettingsRepository.sendTranscriptsToRemoteLlm
+        .collectAsState(initial = HistorySettingsRepository.DEFAULT_SEND_TRANSCRIPTS_TO_REMOTE_LLM)
+    val logDiagnostics by historySettingsRepository.logDiagnosticsEnabled
+        .collectAsState(initial = HistorySettingsRepository.DEFAULT_LOG_DIAGNOSTICS)
+    var confirmClear by remember { mutableStateOf(false) }
 
-// --- History page (skeleton — slice #6b populates this) ---
-
-@Composable
-private fun HistoryPage(modifier: Modifier = Modifier) {
-    // Slice #6b (issue #8) will populate this with the dictation-history list.
-    SkeletonPage(
-        modifier = modifier,
-        message = "Dictation history arrives in a future update.",
-    )
-}
-
-@Composable
-private fun SkeletonPage(modifier: Modifier, message: String) {
-    Box(
+    Column(
         modifier = modifier
             .fillMaxSize()
             .padding(16.dp),
-        contentAlignment = Alignment.Center,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        // Retention picker — the master gate for the dictation history.
+        // `Off` keeps the database empty; the IME's transcript area falls
+        // back to the single-utterance preview in that case.
+        Text(
+            text = "Dictation history retention",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "How many recent dictations to keep. Off disables the history entirely; " +
+                "no audio is ever stored.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        HistoryRetention.entries.forEach { entry ->
+            RetentionRow(
+                entry = entry,
+                selected = entry == retention,
+                onSelect = {
+                    scope.launch { historySettingsRepository.setRetention(entry) }
+                },
+            )
+        }
+
+        TextButton(
+            onClick = { confirmClear = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Clear history now")
+        }
+
+        HorizontalDivider()
+
+        // Send transcripts to remote LLM — gates ApiPostProcessor.
+        ToggleRow(
+            title = "Send transcripts to remote LLM",
+            description = "When off, the polish stage falls back to the raw transcript even " +
+                "if a remote API is configured. Local on-device polish is unaffected.",
+            checked = sendToLlm,
+            onCheckedChange = { enabled ->
+                scope.launch { historySettingsRepository.setSendTranscriptsToRemoteLlm(enabled) }
+            },
+        )
+
+        HorizontalDivider()
+
+        // Log diagnostics — opt-in by default.
+        ToggleRow(
+            title = "Log diagnostics",
+            description = "Off by default. When on, Whisper Board records timing and routing " +
+                "metadata for debugging.",
+            checked = logDiagnostics,
+            onCheckedChange = { enabled ->
+                scope.launch { historySettingsRepository.setLogDiagnosticsEnabled(enabled) }
+            },
+        )
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Clear dictation history?") },
+            text = {
+                Text("All recorded dictation entries will be deleted. This cannot be undone.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    scope.launch { dictationHistoryRepository.deleteAll() }
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) { Text("Cancel") }
+            },
+        )
+    }
+}
+
+@Composable
+private fun RetentionRow(
+    entry: HistoryRetention,
+    selected: Boolean,
+    onSelect: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onSelect,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Text(
+            text = when (entry) {
+                HistoryRetention.Off -> "Off — do not record"
+                HistoryRetention.Twenty5 -> "25 entries"
+                HistoryRetention.OneHundred -> "100 entries (default)"
+                HistoryRetention.FiveHundred -> "500 entries"
+            },
+            style = MaterialTheme.typography.bodyLarge,
+        )
+    }
+}
+
+// --- History page ---
+
+@Composable
+private fun HistoryPage(
+    dictationHistoryRepository: DictationHistoryRepository,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    val entries by dictationHistoryRepository.all().collectAsState(initial = emptyList())
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(horizontal = 8.dp, vertical = 8.dp),
     ) {
         Text(
-            text = message,
-            style = MaterialTheme.typography.bodyMedium,
+            text = "Tap an entry to share or copy. Long-press for more options.",
+            style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+        DictationHistoryView(
+            entries = entries,
+            onTap = { /* no focused field on this page; long-press for actions */ },
+            onDelete = { entry ->
+                scope.launch { dictationHistoryRepository.delete(entry.id) }
+            },
+            modifier = Modifier.fillMaxSize(),
+            compactRows = false,
+            emptyStateText = "No dictation history yet. Speak to start filling the history.",
         )
     }
 }
