@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import com.whisperboard.R
 import com.whisperboard.bubble.BubbleSettingsRepository
 import com.whisperboard.bubble.BubbleVisibilityMode
+import com.whisperboard.bubble.shouldShowAccessibilityNudge
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.DownloadProgress
 import com.whisperboard.model.LanguageRepository
@@ -81,10 +82,12 @@ fun SettingsScreen(
     imeEnabled: Boolean = true,
     imeSelected: Boolean = true,
     overlayPermissionGranted: Boolean = false,
+    accessibilityServiceEnabled: Boolean = false,
     onOpenImeSettings: () -> Unit = {},
     onOpenImePicker: () -> Unit = {},
     onPickFile: () -> Unit = {},
     onRequestOverlayPermission: () -> Unit = {},
+    onOpenAccessibilitySettings: () -> Unit = {},
     onStartBubbleService: () -> Unit = {},
     onStopBubbleService: () -> Unit = {},
     pendingFileName: String? = null,
@@ -128,7 +131,9 @@ fun SettingsScreen(
             SettingsPage.Bubble -> BubblePage(
                 bubbleSettingsRepository = bubbleSettingsRepository,
                 overlayPermissionGranted = overlayPermissionGranted,
+                accessibilityServiceEnabled = accessibilityServiceEnabled,
                 onRequestOverlayPermission = onRequestOverlayPermission,
+                onOpenAccessibilitySettings = onOpenAccessibilitySettings,
                 onStartBubbleService = onStartBubbleService,
                 onStopBubbleService = onStopBubbleService,
                 modifier = Modifier.padding(padding),
@@ -324,7 +329,9 @@ private fun ToggleRow(
 private fun BubblePage(
     bubbleSettingsRepository: BubbleSettingsRepository,
     overlayPermissionGranted: Boolean,
+    accessibilityServiceEnabled: Boolean,
     onRequestOverlayPermission: () -> Unit,
+    onOpenAccessibilitySettings: () -> Unit,
     onStartBubbleService: () -> Unit,
     onStopBubbleService: () -> Unit,
     modifier: Modifier = Modifier,
@@ -332,6 +339,16 @@ private fun BubblePage(
     val scope = rememberCoroutineScope()
     val mode by bubbleSettingsRepository.visibilityMode
         .collectAsState(initial = BubbleSettingsRepository.DEFAULT_VISIBILITY)
+    val standaloneUseCount by bubbleSettingsRepository.standaloneUseCount
+        .collectAsState(initial = 0)
+    val nudgeDismissed by bubbleSettingsRepository.accessibilityNudgeDismissed
+        .collectAsState(initial = false)
+
+    val showNudge = shouldShowAccessibilityNudge(
+        standaloneUseCount = standaloneUseCount,
+        accessibilityNudgeDismissed = nudgeDismissed,
+        accessibilityEnabled = accessibilityServiceEnabled,
+    )
 
     Column(
         modifier = modifier
@@ -367,6 +384,58 @@ private fun BubblePage(
                 }
             }
         }
+
+        // Accessibility upgrade nudge — appears once the user has used
+        // standalone mode enough times (per the brief, suggested N = 3) so
+        // they have already seen the bubble's value before the permission
+        // ask. Dismissable; never re-shown after dismissal.
+        if (showNudge) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                ),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Insert into the focused field",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Grant the Whisper Board accessibility service to write " +
+                            "polished transcripts directly into the focused text field. " +
+                            "Standalone copy-and-paste keeps working without it.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = onOpenAccessibilitySettings) {
+                            Text("Open Accessibility settings")
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(onClick = {
+                            scope.launch {
+                                bubbleSettingsRepository.setAccessibilityNudgeDismissed(true)
+                            }
+                        }) {
+                            Text("Not now")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Accessibility status row — single row per the brief. Always
+        // present so the user can revoke or grant the permission later
+        // without having to dig through system settings to find it.
+        AccessibilityStatusRow(
+            enabled = accessibilityServiceEnabled,
+            onClick = onOpenAccessibilitySettings,
+        )
+
+        HorizontalDivider()
 
         // Visibility picker — the brief's single new setting.
         Text(
@@ -448,6 +517,52 @@ private fun BubbleModeRow(
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AccessibilityStatusRow(
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    // Surfaces the in-place insertion permission state per the brief —
+    // single row with a link to system Accessibility settings. Tapping the
+    // row navigates to the system page whether the permission is currently
+    // granted (so users can revoke) or missing (so users can grant).
+    Card(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "In-place insertion",
+                    style = MaterialTheme.typography.titleSmall,
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = if (enabled) {
+                        "Granted. The bubble writes transcripts directly into the " +
+                            "focused field."
+                    } else {
+                        "Not granted. The bubble copies transcripts to the clipboard " +
+                            "for you to paste manually."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

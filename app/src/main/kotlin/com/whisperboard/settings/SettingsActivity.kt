@@ -15,6 +15,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.whisperboard.accessibility.WhisperBoardAccessibilityService
 import com.whisperboard.bubble.BubbleOverlayService
 import com.whisperboard.bubble.BubbleSettingsRepository
 import com.whisperboard.model.BehaviorSettingsRepository
@@ -40,6 +41,7 @@ class SettingsActivity : ComponentActivity() {
     private val imeEnabled = mutableStateOf(false)
     private val imeSelected = mutableStateOf(false)
     private val overlayPermissionGranted = mutableStateOf(false)
+    private val accessibilityServiceEnabled = mutableStateOf(false)
     private val pendingFileName = mutableStateOf<String?>(null)
     private val pendingUri = mutableStateOf<android.net.Uri?>(null)
 
@@ -134,6 +136,7 @@ class SettingsActivity : ComponentActivity() {
                         imeEnabled = imeEnabled.value,
                         imeSelected = imeSelected.value,
                         overlayPermissionGranted = overlayPermissionGranted.value,
+                        accessibilityServiceEnabled = accessibilityServiceEnabled.value,
                         onOpenImeSettings = {
                             startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
                         },
@@ -148,6 +151,15 @@ class SettingsActivity : ComponentActivity() {
                             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
                                 .setData(android.net.Uri.parse("package:$packageName"))
                             startActivity(intent)
+                        },
+                        onOpenAccessibilitySettings = {
+                            // No deep-link to a specific accessibility
+                            // service entry exists on stock Android — the
+                            // ACCESSIBILITY_SETTINGS action drops the user
+                            // on the main page where they pick the
+                            // service. The status row's wording explains
+                            // what they're looking for.
+                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         },
                         onStartBubbleService = {
                             BubbleOverlayService.start(applicationContext)
@@ -171,6 +183,7 @@ class SettingsActivity : ComponentActivity() {
         super.onResume()
         refreshImeStatus()
         refreshOverlayStatus()
+        refreshAccessibilityStatus()
     }
 
     private fun refreshImeStatus() {
@@ -184,5 +197,9 @@ class SettingsActivity : ComponentActivity() {
 
     private fun refreshOverlayStatus() {
         overlayPermissionGranted.value = BubbleOverlayService.hasOverlayPermission(this)
+    }
+
+    private fun refreshAccessibilityStatus() {
+        accessibilityServiceEnabled.value = WhisperBoardAccessibilityService.isEnabled(this)
     }
 }
