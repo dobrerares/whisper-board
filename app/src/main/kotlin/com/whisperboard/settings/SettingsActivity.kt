@@ -19,6 +19,7 @@ import com.whisperboard.bubble.BubbleOverlayService
 import com.whisperboard.bubble.BubbleSettingsRepository
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
+import com.whisperboard.model.LlmModelRepository
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.model.history.DictationHistoryRepository
 import com.whisperboard.model.history.HistorySettingsRepository
@@ -33,6 +34,7 @@ import kotlinx.coroutines.launch
 class SettingsActivity : ComponentActivity() {
 
     private lateinit var repository: ModelRepository
+    private lateinit var llmModelRepository: LlmModelRepository
     private lateinit var languageRepository: LanguageRepository
 
     private val imeEnabled = mutableStateOf(false)
@@ -64,6 +66,7 @@ class SettingsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repository = ModelRepository(applicationContext)
+        llmModelRepository = LlmModelRepository(applicationContext)
         languageRepository = LanguageRepository(applicationContext)
         val apiSettingsRepository = ApiSettingsRepository(applicationContext)
         val postProcessingSettingsRepository = PostProcessingSettingsRepository(applicationContext)
@@ -120,6 +123,7 @@ class SettingsActivity : ComponentActivity() {
                 } else {
                     SettingsScreen(
                         modelRepository = repository,
+                        llmModelRepository = llmModelRepository,
                         languageRepository = languageRepository,
                         apiSettingsRepository = apiSettingsRepository,
                         postProcessingSettingsRepository = postProcessingSettingsRepository,

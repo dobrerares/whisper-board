@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "whisper-board"
 
-include(":app", ":whisper")
+include(":app", ":whisper", ":llm")

@@ -20,13 +20,16 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.whisperboard.audio.AudioPipeline
+import com.whisperboard.llm.LlmContext
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
+import com.whisperboard.model.LlmModelRepository
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.model.history.DictationHistoryRepository
 import com.whisperboard.model.history.HistorySettingsRepository
 import com.whisperboard.model.history.WhisperBoardDatabase
 import com.whisperboard.postprocessing.ApiPostProcessor
+import com.whisperboard.postprocessing.LocalPostProcessor
 import com.whisperboard.postprocessing.PostProcessingRouter
 import com.whisperboard.postprocessing.PostProcessingSettingsRepository
 import com.whisperboard.transcription.ApiEngine
@@ -69,6 +72,7 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var audioPipeline: AudioPipeline
     private lateinit var languageRepository: LanguageRepository
     private lateinit var modelRepository: ModelRepository
+    private lateinit var llmModelRepository: LlmModelRepository
     private lateinit var apiSettingsRepository: ApiSettingsRepository
     private lateinit var postProcessingSettings: PostProcessingSettingsRepository
     private lateinit var behaviorSettings: BehaviorSettingsRepository
@@ -76,6 +80,7 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var historyRepository: DictationHistoryRepository
     private lateinit var engineRouter: EngineRouter
     private lateinit var postProcessingRouter: PostProcessingRouter
+    private lateinit var connectivityManager: ConnectivityManager
     private lateinit var viewModel: KeyboardViewModel
 
     private val apiClient = OkHttpClient.Builder()
@@ -91,6 +96,7 @@ class WhisperBoardIME : InputMethodService(),
         audioPipeline = AudioPipeline(this)
         languageRepository = LanguageRepository(applicationContext)
         modelRepository = ModelRepository(applicationContext)
+        llmModelRepository = LlmModelRepository(applicationContext)
         apiSettingsRepository = ApiSettingsRepository(applicationContext)
         postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
         behaviorSettings = BehaviorSettingsRepository(applicationContext)
@@ -100,12 +106,13 @@ class WhisperBoardIME : InputMethodService(),
             retentionProvider = { historySettings.retention.first() },
         )
 
-        val connectivityManager =
+        connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         engineRouter = EngineRouter(apiSettingsRepository, connectivityManager)
         postProcessingRouter = PostProcessingRouter(
             polishModeProvider = { postProcessingSettings.polishModeEnabled.first() },
             strategyProvider = { postProcessingSettings.strategy.first() },
+            onlineCheck = { isOnline() },
         )
 
         viewModel = KeyboardViewModel(
@@ -147,6 +154,39 @@ class WhisperBoardIME : InputMethodService(),
                     Log.d(TAG, "Whisper model loaded: $modelName")
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to load Whisper model", e)
+                }
+            }
+        }
+
+        // Watch active SLM → rebuild local post-processor.
+        //
+        // The processor itself is cheap; the LlmContext it owns is loaded
+        // lazily inside polish() and unloaded after returning. We rebuild
+        // the processor (changing the factory closure) on model change so
+        // each polish call sees the user's current selection. If no model
+        // is selected the processor is null and the router falls back per
+        // the LOCAL_ONLY / LOCAL_PREFERRED contracts.
+        serviceScope.launch {
+            llmModelRepository.activeModelName.collectLatest { modelName ->
+                postProcessingRouter.localPostProcessor = if (modelName == null) {
+                    Log.d(TAG, "No active SLM selected — local post-processor disabled")
+                    null
+                } else {
+                    val activeModel = llmModelRepository.getActiveModel()
+                    val path = llmModelRepository.getActiveModelPath()
+                    if (path == null || activeModel == null) {
+                        Log.w(TAG, "Active SLM $modelName not found on disk")
+                        null
+                    } else {
+                        val ctxLen = activeModel.contextLength.takeIf { it > 0 }
+                            ?: LlmContext.DEFAULT_CONTEXT_LENGTH
+                        Log.d(TAG, "Configured local post-processor with $modelName")
+                        LocalPostProcessor(
+                            llmContextFactory = {
+                                LlmContext.createContext(path, ctxLen)
+                            },
+                        )
+                    }
                 }
             }
         }
@@ -195,6 +235,12 @@ class WhisperBoardIME : InputMethodService(),
                     }
                 }
         }
+    }
+
+    private fun isOnline(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return false
+        val caps = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     /**
@@ -266,6 +312,7 @@ class WhisperBoardIME : InputMethodService(),
         serviceScope.cancel()
         viewModel.cleanup()
         engineRouter.close()
+        postProcessingRouter.close()
         audioPipeline.release()
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()

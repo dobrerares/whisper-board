@@ -36,14 +36,17 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.whisperboard.R
 import com.whisperboard.audio.AudioPipeline
+import com.whisperboard.llm.LlmContext
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
+import com.whisperboard.model.LlmModelRepository
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.model.history.DictationEntry
 import com.whisperboard.model.history.DictationHistoryRepository
 import com.whisperboard.model.history.HistorySettingsRepository
 import com.whisperboard.model.history.WhisperBoardDatabase
 import com.whisperboard.postprocessing.ApiPostProcessor
+import com.whisperboard.postprocessing.LocalPostProcessor
 import com.whisperboard.postprocessing.PostProcessingContext
 import com.whisperboard.postprocessing.PostProcessingOutcome
 import com.whisperboard.postprocessing.PostProcessingRouter
@@ -168,6 +171,8 @@ class BubbleOverlayService : Service(),
     private lateinit var audioPipeline: AudioPipeline
     private lateinit var languageRepository: LanguageRepository
     private lateinit var modelRepository: ModelRepository
+    private lateinit var llmModelRepository: LlmModelRepository
+    private lateinit var connectivityManagerInternal: android.net.ConnectivityManager
     private lateinit var apiSettingsRepository: ApiSettingsRepository
     private lateinit var postProcessingSettings: PostProcessingSettingsRepository
     private lateinit var behaviorSettings: BehaviorSettingsRepository
@@ -212,6 +217,7 @@ class BubbleOverlayService : Service(),
         audioPipeline = AudioPipeline(this)
         languageRepository = LanguageRepository(applicationContext)
         modelRepository = ModelRepository(applicationContext)
+        llmModelRepository = LlmModelRepository(applicationContext)
         apiSettingsRepository = ApiSettingsRepository(applicationContext)
         postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
         behaviorSettings = BehaviorSettingsRepository(applicationContext)
@@ -222,12 +228,13 @@ class BubbleOverlayService : Service(),
             retentionProvider = { historySettings.retention.first() },
         )
 
-        val connectivityManager =
+        connectivityManagerInternal =
             getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-        engineRouter = EngineRouter(apiSettingsRepository, connectivityManager)
+        engineRouter = EngineRouter(apiSettingsRepository, connectivityManagerInternal)
         postProcessingRouter = PostProcessingRouter(
             polishModeProvider = { postProcessingSettings.polishModeEnabled.first() },
             strategyProvider = { postProcessingSettings.strategy.first() },
+            onlineCheck = { isOnline() },
         )
 
         stateMachine = BubbleStateMachine()
@@ -595,6 +602,33 @@ class BubbleOverlayService : Service(),
             }
         }
 
+        // Active SLM → rebuild local post-processor. The processor itself
+        // is cheap; the LlmContext it owns is loaded lazily inside polish()
+        // and unloaded immediately after, so a 1-3B SLM never coexists in
+        // memory with the loaded Whisper model.
+        serviceScope.launch {
+            llmModelRepository.activeModelName.collectLatest { modelName ->
+                postProcessingRouter.localPostProcessor = if (modelName == null) {
+                    null
+                } else {
+                    val activeModel = llmModelRepository.getActiveModel()
+                    val path = llmModelRepository.getActiveModelPath()
+                    if (path == null || activeModel == null) {
+                        Log.w(TAG, "Active SLM $modelName not found on disk")
+                        null
+                    } else {
+                        val ctxLen = activeModel.contextLength.takeIf { it > 0 }
+                            ?: LlmContext.DEFAULT_CONTEXT_LENGTH
+                        LocalPostProcessor(
+                            llmContextFactory = {
+                                LlmContext.createContext(path, ctxLen)
+                            },
+                        )
+                    }
+                }
+            }
+        }
+
         // API engine + post-processor — follow API settings, with the
         // privacy "send to LLM" toggle gating the post-processor only.
         serviceScope.launch {
@@ -628,6 +662,12 @@ class BubbleOverlayService : Service(),
                     }
                 }
         }
+    }
+
+    private fun isOnline(): Boolean {
+        val net = connectivityManagerInternal.activeNetwork ?: return false
+        val caps = connectivityManagerInternal.getNetworkCapabilities(net) ?: return false
+        return caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private data class ApiAndLlmConfig(

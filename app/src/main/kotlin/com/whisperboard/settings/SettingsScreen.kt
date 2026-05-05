@@ -19,6 +19,9 @@ import com.whisperboard.bubble.BubbleVisibilityMode
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.DownloadProgress
 import com.whisperboard.model.LanguageRepository
+import com.whisperboard.model.LlmModelInfo
+import com.whisperboard.model.LlmModelManifest
+import com.whisperboard.model.LlmModelRepository
 import com.whisperboard.model.ModelInfo
 import com.whisperboard.model.ModelManifest
 import com.whisperboard.model.ModelRepository
@@ -67,6 +70,7 @@ private enum class SettingsPage(val title: String) {
 @Composable
 fun SettingsScreen(
     modelRepository: ModelRepository,
+    llmModelRepository: LlmModelRepository,
     languageRepository: LanguageRepository,
     apiSettingsRepository: ApiSettingsRepository,
     postProcessingSettingsRepository: PostProcessingSettingsRepository,
@@ -158,6 +162,8 @@ fun SettingsScreen(
             )
             SettingsPage.PostProcessing -> PostProcessingPage(
                 postProcessingSettingsRepository = postProcessingSettingsRepository,
+                llmModelRepository = llmModelRepository,
+                snackbarHostState = snackbarHostState,
                 modifier = Modifier.padding(padding),
             )
         }
@@ -912,18 +918,59 @@ private fun TranscriptionPage(
 @Composable
 private fun PostProcessingPage(
     postProcessingSettingsRepository: PostProcessingSettingsRepository,
+    llmModelRepository: LlmModelRepository,
+    snackbarHostState: SnackbarHostState,
     modifier: Modifier = Modifier,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(16.dp),
+    val strategy by postProcessingSettingsRepository.strategy
+        .collectAsState(initial = PostProcessingSettingsRepository.DEFAULT_STRATEGY)
+
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        PostProcessingSettingsSection(
-            postProcessingSettingsRepository = postProcessingSettingsRepository,
-        )
+        item {
+            PostProcessingSettingsSection(
+                postProcessingSettingsRepository = postProcessingSettingsRepository,
+            )
+        }
+        // Show the SLM picker whenever a strategy that can route locally is
+        // active. API_ONLY users don't need it; OFF users don't either.
+        if (strategy in localCapableStrategies) {
+            item {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Local SLM",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "Small instruction-tuned model used for on-device polishing. " +
+                        "Loaded only while polishing each utterance, then unloaded so it " +
+                        "doesn't pin RAM alongside the speech-to-text model.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            llmModelPickerItems(
+                llmModelRepository = llmModelRepository,
+                snackbarHostState = snackbarHostState,
+            )
+        }
     }
 }
+
+/**
+ * Strategies that can route locally — used by the Post-processing page to
+ * decide whether to show the SLM picker. `LOCAL_PREFERRED` and
+ * `API_WHEN_ONLINE` need it because they fall back to / from the local
+ * runtime; `LOCAL_ONLY` needs it because it's the only path it uses.
+ */
+private val localCapableStrategies = setOf(
+    PostProcessingStrategy.LOCAL_ONLY,
+    PostProcessingStrategy.LOCAL_PREFERRED,
+    PostProcessingStrategy.API_WHEN_ONLINE,
+)
 
 // --- shared rows / sections ---
 
@@ -1282,32 +1329,32 @@ private fun PostProcessingSettingsSection(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // Strategy picker — only API_ONLY routes meaningfully in slice 1.
+        // Strategy picker — full vocabulary now that the local runtime
+        // ships in :llm. Mirrors EngineStrategy's chip set.
         Text(
             text = "Strategy",
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(modifier = Modifier.height(4.dp))
 
-        val routableStrategies = listOf(
-            PostProcessingStrategy.OFF,
-            PostProcessingStrategy.API_ONLY,
-        )
+        val strategies = PostProcessingStrategy.entries
         SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            routableStrategies.forEachIndexed { index, s ->
+            strategies.forEachIndexed { index, s ->
                 SegmentedButton(
                     selected = strategy == s,
                     onClick = {
                         scope.launch { postProcessingSettingsRepository.setStrategy(s) }
                     },
                     enabled = polishMode,
-                    shape = SegmentedButtonDefaults.itemShape(index, routableStrategies.size),
+                    shape = SegmentedButtonDefaults.itemShape(index, strategies.size),
                 ) {
                     Text(
                         text = when (s) {
                             PostProcessingStrategy.OFF -> "Off"
                             PostProcessingStrategy.API_ONLY -> "API"
-                            else -> s.name
+                            PostProcessingStrategy.LOCAL_ONLY -> "Local"
+                            PostProcessingStrategy.LOCAL_PREFERRED -> "Local+API"
+                            PostProcessingStrategy.API_WHEN_ONLINE -> "Auto"
                         },
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -1317,22 +1364,156 @@ private fun PostProcessingSettingsSection(
 
         Text(
             text = when (strategy) {
-                PostProcessingStrategy.OFF -> "Polish runs only when explicitly enabled."
-                PostProcessingStrategy.API_ONLY -> "Send raw transcript to the configured chat-completions endpoint for polishing."
-                PostProcessingStrategy.LOCAL_ONLY,
-                PostProcessingStrategy.LOCAL_PREFERRED,
-                PostProcessingStrategy.API_WHEN_ONLINE -> "Local SLM not yet available — falls back to raw transcript."
+                PostProcessingStrategy.OFF ->
+                    "Polish runs only when explicitly enabled."
+                PostProcessingStrategy.API_ONLY ->
+                    "Send raw transcript to the configured chat-completions endpoint for polishing."
+                PostProcessingStrategy.LOCAL_ONLY ->
+                    "Polish on-device using the selected SLM. Stays offline; no transcript leaves your phone."
+                PostProcessingStrategy.LOCAL_PREFERRED ->
+                    "Try local first, fall back to API on timeout or failure."
+                PostProcessingStrategy.API_WHEN_ONLINE ->
+                    "API when online, local SLM when offline."
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
         )
+    }
+}
 
-        Text(
-            text = "Local on-device polishing arrives in a future update.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+/**
+ * Items for the SLM picker — folded into the Post-processing page's
+ * LazyColumn rather than the standalone Models page so the picker and the
+ * strategy radio that needs it live next to each other.
+ */
+private fun androidx.compose.foundation.lazy.LazyListScope.llmModelPickerItems(
+    llmModelRepository: LlmModelRepository,
+    snackbarHostState: SnackbarHostState,
+) {
+    item {
+        LlmModelPicker(
+            llmModelRepository = llmModelRepository,
+            snackbarHostState = snackbarHostState,
         )
+    }
+}
+
+@Composable
+private fun LlmModelPicker(
+    llmModelRepository: LlmModelRepository,
+    snackbarHostState: SnackbarHostState,
+) {
+    val scope = rememberCoroutineScope()
+    val downloadedModels by llmModelRepository.downloadedModels.collectAsState(initial = emptySet())
+    val activeModelName by llmModelRepository.activeModelName.collectAsState(initial = null)
+    val downloadingModel by llmModelRepository.downloadingModel.collectAsState(initial = null)
+    val downloadProgress by llmModelRepository.downloadProgress.collectAsState(initial = null)
+    val allModels by llmModelRepository.allModels.collectAsState(initial = LlmModelManifest.models)
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        allModels.forEach { model ->
+            LlmModelCard(
+                model = model,
+                isDownloaded = model.name in downloadedModels,
+                isActive = model.name == activeModelName,
+                isDownloading = model.name == downloadingModel,
+                progress = if (model.name == downloadingModel) downloadProgress else null,
+                onDownload = {
+                    scope.launch {
+                        val result = llmModelRepository.download(model)
+                        result.onFailure { e ->
+                            snackbarHostState.showSnackbar(
+                                "Download failed: ${e.message ?: "Unknown error"}"
+                            )
+                        }
+                    }
+                },
+                onDelete = { scope.launch { llmModelRepository.delete(model) } },
+                onSelect = { scope.launch { llmModelRepository.setActiveModel(model.name) } },
+                onCancel = { llmModelRepository.cancelDownload() },
+            )
+        }
+    }
+}
+
+@Composable
+private fun LlmModelCard(
+    model: LlmModelInfo,
+    isDownloaded: Boolean,
+    isActive: Boolean,
+    isDownloading: Boolean,
+    progress: DownloadProgress?,
+    onDownload: () -> Unit,
+    onDelete: () -> Unit,
+    onSelect: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = if (isActive) {
+            CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+        } else {
+            CardDefaults.cardColors()
+        },
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(text = model.displayName, style = MaterialTheme.typography.titleSmall)
+                    val meta = buildList {
+                        if (model.parameterBillions > 0f) add("${model.parameterBillions}B params")
+                        if (model.quantization.isNotBlank()) add(model.quantization)
+                        if (model.contextLength > 0) add("${model.contextLength}-token context")
+                    }.joinToString(" • ")
+                    if (meta.isNotBlank()) {
+                        Text(
+                            text = meta,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (isActive) {
+                        Text(
+                            text = "Active",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
+
+                when {
+                    isDownloading -> TextButton(onClick = onCancel) { Text("Cancel") }
+                    isDownloaded && !isActive -> {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = onSelect) { Text("Use") }
+                            TextButton(onClick = onDelete) { Text("Delete") }
+                        }
+                    }
+                    isDownloaded && isActive -> {
+                        TextButton(onClick = onDelete) { Text("Delete") }
+                    }
+                    else -> TextButton(onClick = onDownload) { Text("Download") }
+                }
+            }
+
+            if (isDownloading && progress != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                LinearProgressIndicator(
+                    progress = { progress.fraction },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text(
+                    text = "${progress.bytesDownloaded / 1_000_000} / ${progress.totalBytes / 1_000_000} MB",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
     }
 }
 
