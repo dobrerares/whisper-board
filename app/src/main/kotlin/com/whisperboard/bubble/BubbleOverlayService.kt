@@ -595,27 +595,32 @@ class BubbleOverlayService : Service(),
             }
         }
 
-        // API engine + post-processor — follow API settings.
+        // API engine + post-processor — follow API settings, with the
+        // privacy "send to LLM" toggle gating the post-processor only.
         serviceScope.launch {
             combine(
                 apiSettingsRepository.provider,
                 apiSettingsRepository.baseUrl,
                 apiSettingsRepository.model,
-            ) { provider, baseUrl, model -> Triple(provider, baseUrl, model) }
-                .collectLatest {
+                historySettings.sendTranscriptsToRemoteLlm,
+            ) { provider, baseUrl, model, sendToLlm ->
+                ApiAndLlmConfig(provider, baseUrl, model, sendToLlm)
+            }
+                .collectLatest { state ->
                     try {
                         val config = apiSettingsRepository.resolveApiConfig()
                         engineRouter.apiEngine = if (config != null) {
                             ApiEngine(apiClient, config.baseUrl, config.apiKey, config.model)
                         } else null
-                        postProcessingRouter.apiPostProcessor = if (config != null) {
-                            ApiPostProcessor(
-                                client = apiClient,
-                                baseUrl = config.baseUrl,
-                                apiKey = config.apiKey,
-                                model = chatModelFor(apiSettingsRepository.provider.first()),
-                            )
-                        } else null
+                        postProcessingRouter.apiPostProcessor =
+                            if (config != null && state.sendToLlm) {
+                                ApiPostProcessor(
+                                    client = apiClient,
+                                    baseUrl = config.baseUrl,
+                                    apiKey = config.apiKey,
+                                    model = chatModelFor(apiSettingsRepository.provider.first()),
+                                )
+                            } else null
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to configure API engine", e)
                         engineRouter.apiEngine = null
@@ -624,6 +629,13 @@ class BubbleOverlayService : Service(),
                 }
         }
     }
+
+    private data class ApiAndLlmConfig(
+        val provider: ApiProvider,
+        val baseUrl: String,
+        val model: String,
+        val sendToLlm: Boolean,
+    )
 
     private fun chatModelFor(provider: ApiProvider): String =
         when (provider) {

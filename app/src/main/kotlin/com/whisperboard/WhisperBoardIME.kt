@@ -150,14 +150,20 @@ class WhisperBoardIME : InputMethodService(),
             }
         }
 
-        // Watch API settings → rebuild API engine + API post-processor
+        // Watch API settings + the privacy "send transcripts to LLM" toggle.
+        // The toggle gates only the post-processor (the LLM polish stage);
+        // transcription is allowed to keep using the API since that's the
+        // user's chosen STT backend, not the polish surface.
         serviceScope.launch {
             combine(
                 apiSettingsRepository.provider,
                 apiSettingsRepository.baseUrl,
                 apiSettingsRepository.model,
-            ) { provider, baseUrl, model -> Triple(provider, baseUrl, model) }
-                .collectLatest {
+                historySettings.sendTranscriptsToRemoteLlm,
+            ) { provider, baseUrl, model, sendToLlm ->
+                ApiAndLlmConfig(provider, baseUrl, model, sendToLlm)
+            }
+                .collectLatest { state ->
                     try {
                         val config = apiSettingsRepository.resolveApiConfig()
                         engineRouter.apiEngine = if (config != null) {
@@ -167,10 +173,11 @@ class WhisperBoardIME : InputMethodService(),
                         }
                         // The post-processor reuses the same base URL + API key but
                         // talks to /chat/completions with a chat-capable model.
-                        // The transcription `model` field is a Whisper model and
-                        // is not appropriate here, so we pick a sensible chat
-                        // default per provider.
-                        postProcessingRouter.apiPostProcessor = if (config != null) {
+                        // Gate it on both the API config and the privacy
+                        // toggle: when "send transcripts to remote LLM" is
+                        // off, leave the post-processor null so the router
+                        // falls back to the raw transcript.
+                        postProcessingRouter.apiPostProcessor = if (config != null && state.sendToLlm) {
                             ApiPostProcessor(
                                 client = apiClient,
                                 baseUrl = config.baseUrl,
@@ -188,6 +195,18 @@ class WhisperBoardIME : InputMethodService(),
                 }
         }
     }
+
+    /**
+     * Combine result for API config + the "send to LLM" toggle. A `combine`
+     * with four sources doesn't have a built-in tuple, so a tiny named
+     * record keeps the call site readable.
+     */
+    private data class ApiAndLlmConfig(
+        val provider: com.whisperboard.transcription.ApiProvider,
+        val baseUrl: String,
+        val model: String,
+        val sendToLlm: Boolean,
+    )
 
     /**
      * Default chat-completions model for each provider. Used by the

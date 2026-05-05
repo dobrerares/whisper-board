@@ -20,10 +20,14 @@ import com.whisperboard.bubble.BubbleSettingsRepository
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.model.history.DictationHistoryRepository
+import com.whisperboard.model.history.HistorySettingsRepository
+import com.whisperboard.model.history.WhisperBoardDatabase
 import com.whisperboard.onboarding.FirstLaunchPrompt
 import com.whisperboard.postprocessing.PostProcessingSettingsRepository
 import com.whisperboard.transcription.ApiSettingsRepository
 import com.whisperboard.ui.theme.WhisperBoardTheme
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class SettingsActivity : ComponentActivity() {
@@ -65,6 +69,11 @@ class SettingsActivity : ComponentActivity() {
         val postProcessingSettingsRepository = PostProcessingSettingsRepository(applicationContext)
         val behaviorSettingsRepository = BehaviorSettingsRepository(applicationContext)
         val bubbleSettingsRepository = BubbleSettingsRepository(applicationContext)
+        val historySettingsRepository = HistorySettingsRepository(applicationContext)
+        val dictationHistoryRepository = DictationHistoryRepository(
+            dao = WhisperBoardDatabase.getInstance(applicationContext).dictationHistoryDao(),
+            retentionProvider = { historySettingsRepository.retention.first() },
+        )
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -116,6 +125,8 @@ class SettingsActivity : ComponentActivity() {
                         postProcessingSettingsRepository = postProcessingSettingsRepository,
                         behaviorSettingsRepository = behaviorSettingsRepository,
                         bubbleSettingsRepository = bubbleSettingsRepository,
+                        historySettingsRepository = historySettingsRepository,
+                        dictationHistoryRepository = dictationHistoryRepository,
                         imeEnabled = imeEnabled.value,
                         imeSelected = imeSelected.value,
                         overlayPermissionGranted = overlayPermissionGranted.value,
