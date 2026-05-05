@@ -151,51 +151,126 @@ class PostProcessingRouterTest {
         assertNotEquals("", outcome.reason)
     }
 
-    // --- LOCAL_* and API_WHEN_ONLINE: not yet routable ---
+    // --- LOCAL_ONLY (Slice 4) ---
 
     @Test
-    fun `LOCAL_ONLY falls through to Skipped until slice 4 lands`() = runTest {
-        for (apiCase in listOf(successApiPostProcessor(), null)) {
-            val router = newRouter(
-                strategy = PostProcessingStrategy.LOCAL_ONLY,
-                apiPostProcessor = apiCase,
-            )
-            val outcome = router.polish(raw, context)
-            assertTrue(
-                "LOCAL_ONLY must fall through to Skipped (api=$apiCase); got $outcome",
-                outcome is PostProcessingOutcome.Skipped,
-            )
-        }
+    fun `LOCAL_ONLY with local available returns Polished`() = runTest {
+        val polished = "First, I went to the store."
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_ONLY)
+        router.localPostProcessor = successLocalPostProcessor(polished)
+        val outcome = router.polish(raw, context)
+        assertTrue("expected Polished, got $outcome", outcome is PostProcessingOutcome.Polished)
+        assertEquals(polished, (outcome as PostProcessingOutcome.Polished).text)
     }
 
     @Test
-    fun `LOCAL_PREFERRED falls through to Skipped until slice 4 lands`() = runTest {
-        for (apiCase in listOf(successApiPostProcessor(), null)) {
-            val router = newRouter(
-                strategy = PostProcessingStrategy.LOCAL_PREFERRED,
-                apiPostProcessor = apiCase,
-            )
-            val outcome = router.polish(raw, context)
-            assertTrue(
-                "LOCAL_PREFERRED must fall through to Skipped (api=$apiCase); got $outcome",
-                outcome is PostProcessingOutcome.Skipped,
-            )
-        }
+    fun `LOCAL_ONLY with no local processor returns Fallback`() = runTest {
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_ONLY)
+        // No local processor configured — even with API available, LOCAL_ONLY
+        // must NOT silently use the API path. The whole point of the strategy
+        // is the user opted out of network polishing.
+        router.apiPostProcessor = successApiPostProcessor()
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Fallback)
+        assertEquals(raw, (outcome as PostProcessingOutcome.Fallback).text)
+        assertTrue(outcome.reason.isNotBlank())
     }
 
     @Test
-    fun `API_WHEN_ONLINE falls through to Skipped until slice 4 lands`() = runTest {
-        for (apiCase in listOf(successApiPostProcessor(), null)) {
-            val router = newRouter(
-                strategy = PostProcessingStrategy.API_WHEN_ONLINE,
-                apiPostProcessor = apiCase,
-            )
-            val outcome = router.polish(raw, context)
-            assertTrue(
-                "API_WHEN_ONLINE must fall through to Skipped (api=$apiCase); got $outcome",
-                outcome is PostProcessingOutcome.Skipped,
-            )
-        }
+    fun `LOCAL_ONLY with failing local returns Fallback with raw text`() = runTest {
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_ONLY)
+        router.localPostProcessor = failingLocalPostProcessor(reason = "model crashed")
+        // Even with API available, LOCAL_ONLY must NOT fall over to API.
+        router.apiPostProcessor = successApiPostProcessor()
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Fallback)
+        assertEquals(raw, (outcome as PostProcessingOutcome.Fallback).text)
+    }
+
+    // --- LOCAL_PREFERRED (Slice 4) ---
+
+    @Test
+    fun `LOCAL_PREFERRED uses local when local succeeds`() = runTest {
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_PREFERRED)
+        router.localPostProcessor = successLocalPostProcessor("local polish")
+        router.apiPostProcessor = successApiPostProcessor("api polish")
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Polished)
+        assertEquals("local polish", (outcome as PostProcessingOutcome.Polished).text)
+    }
+
+    @Test
+    fun `LOCAL_PREFERRED falls back to API when local fails`() = runTest {
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_PREFERRED)
+        router.localPostProcessor = failingLocalPostProcessor()
+        router.apiPostProcessor = successApiPostProcessor("api polish")
+        val outcome = router.polish(raw, context)
+        assertTrue("expected Polished from API fallback, got $outcome",
+            outcome is PostProcessingOutcome.Polished)
+        assertEquals("api polish", (outcome as PostProcessingOutcome.Polished).text)
+    }
+
+    @Test
+    fun `LOCAL_PREFERRED returns Fallback when both fail`() = runTest {
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_PREFERRED)
+        router.localPostProcessor = failingLocalPostProcessor()
+        router.apiPostProcessor = failingApiPostProcessor()
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Fallback)
+        assertEquals(raw, (outcome as PostProcessingOutcome.Fallback).text)
+    }
+
+    @Test
+    fun `LOCAL_PREFERRED falls back to API when local is missing`() = runTest {
+        val router = newRouter(strategy = PostProcessingStrategy.LOCAL_PREFERRED)
+        router.apiPostProcessor = successApiPostProcessor("api polish")
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Polished)
+        assertEquals("api polish", (outcome as PostProcessingOutcome.Polished).text)
+    }
+
+    // --- API_WHEN_ONLINE (Slice 4) ---
+
+    @Test
+    fun `API_WHEN_ONLINE uses API when online`() = runTest {
+        val router = PostProcessingRouter(
+            polishModeProvider = { true },
+            strategyProvider = { PostProcessingStrategy.API_WHEN_ONLINE },
+            onlineCheck = { true },
+        )
+        router.apiPostProcessor = successApiPostProcessor("api polish")
+        router.localPostProcessor = successLocalPostProcessor("local polish")
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Polished)
+        assertEquals("api polish", (outcome as PostProcessingOutcome.Polished).text)
+    }
+
+    @Test
+    fun `API_WHEN_ONLINE uses local when offline`() = runTest {
+        val router = PostProcessingRouter(
+            polishModeProvider = { true },
+            strategyProvider = { PostProcessingStrategy.API_WHEN_ONLINE },
+            onlineCheck = { false },
+        )
+        router.apiPostProcessor = successApiPostProcessor("api polish")
+        router.localPostProcessor = successLocalPostProcessor("local polish")
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Polished)
+        assertEquals("local polish", (outcome as PostProcessingOutcome.Polished).text)
+    }
+
+    @Test
+    fun `API_WHEN_ONLINE uses local when online but API not configured`() = runTest {
+        val router = PostProcessingRouter(
+            polishModeProvider = { true },
+            strategyProvider = { PostProcessingStrategy.API_WHEN_ONLINE },
+            onlineCheck = { true },
+        )
+        router.localPostProcessor = successLocalPostProcessor("local polish")
+        // No API configured.
+        val outcome = router.polish(raw, context)
+        assertTrue(outcome is PostProcessingOutcome.Polished)
+        assertEquals("local polish", (outcome as PostProcessingOutcome.Polished).text)
     }
 
     // --- words-never-lost invariant ---
@@ -221,6 +296,27 @@ class PostProcessingRouterTest {
             assertTrue("words must never be lost; got empty for $outcome", text.isNotEmpty())
         }
     }
+
+    // --- helpers for the local processor (Slice 4) ---
+
+    /**
+     * Test double for [LocalPostProcessor]. We subclass directly so the
+     * router's `localPostProcessor` slot accepts it; the constructor's
+     * factory is unused because we override [polish] to skip the native call
+     * entirely.
+     */
+    private fun successLocalPostProcessor(polished: String = "Polished."): LocalPostProcessor =
+        object : LocalPostProcessor(llmContextFactory = { error("unused") }) {
+            override suspend fun polish(rawTranscript: String, context: PostProcessingContext): String =
+                polished
+        }
+
+    private fun failingLocalPostProcessor(reason: String = "boom"): LocalPostProcessor =
+        object : LocalPostProcessor(llmContextFactory = { error("unused") }) {
+            override suspend fun polish(rawTranscript: String, context: PostProcessingContext): String {
+                throw PostProcessingException(reason)
+            }
+        }
 }
 
 /**
