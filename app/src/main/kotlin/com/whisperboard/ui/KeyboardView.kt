@@ -33,6 +33,8 @@ fun KeyboardScreen(
     val waveformData by viewModel.waveformData.collectAsState()
     val polishUnavailable by viewModel.polishUnavailable.collectAsState()
     val detectedLanguageFlash by viewModel.detectedLanguageFlash.collectAsState()
+    val historyRetention by viewModel.historyRetention.collectAsState()
+    val recentEntries by viewModel.recentDictationEntries.collectAsState()
 
     WhisperBoardTheme {
         val snackbarHostState = remember { SnackbarHostState() }
@@ -68,11 +70,27 @@ fun KeyboardScreen(
                     .padding(horizontal = 8.dp, vertical = 4.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                // History-scroll mode kicks in only when retention is on
+                // *and* the auto-insert path is the user's flow (preview
+                // mode keeps the single-utterance area so tap-to-commit
+                // still works). Detect "auto-insert is on" by the absence
+                // of a staged transcript: when auto-insert is off the
+                // staged text is the just-spoken transcript; when on,
+                // it's empty by design (TranscriptDelivery clears it).
+                val historyEnabled = historyRetention.isEnabled && transcribedText.isEmpty()
                 TranscriptionArea(
                     text = transcribedText,
                     onCommit = { viewModel.commitText(inputConnection()) },
                     modifier = Modifier.fillMaxWidth(),
                     polishUnavailable = polishUnavailable,
+                    historyEntries = recentEntries,
+                    historyEnabled = historyEnabled,
+                    onTapHistoryEntry = { entry ->
+                        viewModel.reinsertEntry(entry, inputConnection())
+                    },
+                    onDeleteHistoryEntry = { entry ->
+                        viewModel.deleteEntry(entry.id)
+                    },
                 )
 
                 LanguageChip(
