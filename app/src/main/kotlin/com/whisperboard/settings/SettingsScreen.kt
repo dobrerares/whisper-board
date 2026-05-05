@@ -16,6 +16,8 @@ import com.whisperboard.model.ModelInfo
 import com.whisperboard.model.ModelManifest
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.model.WhisperLanguages
+import com.whisperboard.postprocessing.PostProcessingSettingsRepository
+import com.whisperboard.postprocessing.PostProcessingStrategy
 import com.whisperboard.transcription.ApiProvider
 import com.whisperboard.transcription.ApiSettingsRepository
 import com.whisperboard.transcription.EngineStrategy
@@ -27,6 +29,7 @@ fun SettingsScreen(
     modelRepository: ModelRepository,
     languageRepository: LanguageRepository,
     apiSettingsRepository: ApiSettingsRepository,
+    postProcessingSettingsRepository: PostProcessingSettingsRepository,
     imeEnabled: Boolean = true,
     imeSelected: Boolean = true,
     onOpenImeSettings: () -> Unit = {},
@@ -154,6 +157,21 @@ fun SettingsScreen(
 
             item {
                 TranscriptionSettingsSection(apiSettingsRepository = apiSettingsRepository)
+            }
+
+            // --- Post-processing section ---
+            item {
+                Text(
+                    text = "Post-processing",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp)
+                )
+            }
+
+            item {
+                PostProcessingSettingsSection(
+                    postProcessingSettingsRepository = postProcessingSettingsRepository,
+                )
             }
 
             // --- Languages section ---
@@ -566,6 +584,97 @@ private fun TranscriptionSettingsSection(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun PostProcessingSettingsSection(
+    postProcessingSettingsRepository: PostProcessingSettingsRepository,
+) {
+    val scope = rememberCoroutineScope()
+    val polishMode by postProcessingSettingsRepository.polishModeEnabled
+        .collectAsState(initial = PostProcessingSettingsRepository.DEFAULT_POLISH_MODE)
+    val strategy by postProcessingSettingsRepository.strategy
+        .collectAsState(initial = PostProcessingSettingsRepository.DEFAULT_STRATEGY)
+
+    Column {
+        // Master polish-mode toggle
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Polish mode",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                    text = "Clean fillers, fix punctuation, format lists and paragraphs",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(
+                checked = polishMode,
+                onCheckedChange = { enabled ->
+                    scope.launch { postProcessingSettingsRepository.setPolishModeEnabled(enabled) }
+                },
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        // Strategy picker — only API_ONLY routes meaningfully in slice 1.
+        Text(
+            text = "Strategy",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        val routableStrategies = listOf(
+            PostProcessingStrategy.OFF,
+            PostProcessingStrategy.API_ONLY,
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            routableStrategies.forEachIndexed { index, s ->
+                SegmentedButton(
+                    selected = strategy == s,
+                    onClick = {
+                        scope.launch { postProcessingSettingsRepository.setStrategy(s) }
+                    },
+                    enabled = polishMode,
+                    shape = SegmentedButtonDefaults.itemShape(index, routableStrategies.size),
+                ) {
+                    Text(
+                        text = when (s) {
+                            PostProcessingStrategy.OFF -> "Off"
+                            PostProcessingStrategy.API_ONLY -> "API"
+                            else -> s.name
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = when (strategy) {
+                PostProcessingStrategy.OFF -> "Polish runs only when explicitly enabled."
+                PostProcessingStrategy.API_ONLY -> "Send raw transcript to the configured chat-completions endpoint for polishing."
+                PostProcessingStrategy.LOCAL_ONLY,
+                PostProcessingStrategy.LOCAL_PREFERRED,
+                PostProcessingStrategy.API_WHEN_ONLINE -> "Local SLM not yet available — falls back to raw transcript."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp, bottom = 8.dp),
+        )
+
+        Text(
+            text = "Local on-device polishing arrives in a future update.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
