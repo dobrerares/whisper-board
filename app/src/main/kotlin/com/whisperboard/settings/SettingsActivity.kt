@@ -14,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.postprocessing.PostProcessingSettingsRepository
 import com.whisperboard.transcription.ApiSettingsRepository
 import com.whisperboard.ui.theme.WhisperBoardTheme
 
@@ -51,6 +52,7 @@ class SettingsActivity : ComponentActivity() {
         repository = ModelRepository(applicationContext)
         val languageRepository = LanguageRepository(applicationContext)
         val apiSettingsRepository = ApiSettingsRepository(applicationContext)
+        val postProcessingSettingsRepository = PostProcessingSettingsRepository(applicationContext)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -66,6 +68,7 @@ class SettingsActivity : ComponentActivity() {
                     modelRepository = repository,
                     languageRepository = languageRepository,
                     apiSettingsRepository = apiSettingsRepository,
+                    postProcessingSettingsRepository = postProcessingSettingsRepository,
                     imeEnabled = imeEnabled.value,
                     imeSelected = imeSelected.value,
                     onOpenImeSettings = {
