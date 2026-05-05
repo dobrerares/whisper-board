@@ -16,16 +16,11 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
-import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.lifecycle.Lifecycle
@@ -334,11 +329,10 @@ class BubbleOverlayService : Service(),
             return
         }
 
-        val (initialX, initialY) = serviceScope.launchAndAwait {
-            val pos = bubbleSettings.position.first()
-            if (pos.isUnset) DEFAULT_X to DEFAULT_Y else pos.x to pos.y
-        }
-        layoutParams = buildOverlayParams(initialX, initialY)
+        // Attach with the default placement immediately, then update once
+        // the persisted position emits. We avoid runBlocking on the main
+        // thread here so the service start path stays responsive.
+        layoutParams = buildOverlayParams(DEFAULT_X, DEFAULT_Y)
 
         val view = ComposeBubbleView(this) {
             BubbleView(
@@ -358,6 +352,16 @@ class BubbleOverlayService : Service(),
         try {
             windowManager.addView(view, layoutParams)
             isAttached = true
+            // Restore the persisted position once it's loaded — happens off
+            // the main thread, then jumps back here to update the layout.
+            serviceScope.launch {
+                val pos = bubbleSettings.position.first()
+                if (!pos.isUnset && layoutParams != null && bubbleView == view) {
+                    layoutParams?.x = pos.x
+                    layoutParams?.y = pos.y
+                    runCatching { windowManager.updateViewLayout(view, layoutParams) }
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to attach overlay view", e)
             bubbleView = null
@@ -670,16 +674,6 @@ class BubbleOverlayService : Service(),
         }
     }
 
-    // --- Coroutine helper ---
-
-    /**
-     * Run [block] on the service scope and block the caller until it returns.
-     * Used during one-time setup paths where the cost of a block is
-     * acceptable. Long-running flow collection uses normal `launch`.
-     */
-    private fun <T> CoroutineScope.launchAndAwait(block: suspend () -> T): T {
-        return kotlinx.coroutines.runBlocking { block() }
-    }
 }
 
 private const val BUBBLE_HIDDEN_OVERHANG = 32

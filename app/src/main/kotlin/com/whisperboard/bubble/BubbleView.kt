@@ -199,7 +199,6 @@ private fun CollapsedBubble(
                 // long-press wins when it stays.
                 awaitEachGesture {
                     awaitFirstDown()
-                    var pttFired = false
                     val down = System.currentTimeMillis()
                     val up = waitForUpOrCancellation()
                     val elapsed = System.currentTimeMillis() - down
@@ -208,16 +207,12 @@ private fun CollapsedBubble(
                             // Long press — start, then immediately end on
                             // release. The state machine treats this as
                             // PTT.
-                            pttFired = true
                             onLongPressStart()
                             onLongPressEnd()
                         } else {
                             onTap()
                         }
                     }
-                    // Suppress the unused-warning hint.
-                    @Suppress("UNUSED_VARIABLE")
-                    val _used = pttFired
                 }
             },
         shape = CircleShape,
