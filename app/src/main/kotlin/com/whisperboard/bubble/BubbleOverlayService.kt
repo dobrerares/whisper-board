@@ -39,6 +39,10 @@ import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.model.history.DictationEntry
+import com.whisperboard.model.history.DictationHistoryRepository
+import com.whisperboard.model.history.HistorySettingsRepository
+import com.whisperboard.model.history.WhisperBoardDatabase
 import com.whisperboard.postprocessing.ApiPostProcessor
 import com.whisperboard.postprocessing.PostProcessingContext
 import com.whisperboard.postprocessing.PostProcessingOutcome
@@ -168,6 +172,8 @@ class BubbleOverlayService : Service(),
     private lateinit var postProcessingSettings: PostProcessingSettingsRepository
     private lateinit var behaviorSettings: BehaviorSettingsRepository
     private lateinit var bubbleSettings: BubbleSettingsRepository
+    private lateinit var historySettings: HistorySettingsRepository
+    private lateinit var historyRepository: DictationHistoryRepository
     private lateinit var engineRouter: EngineRouter
     private lateinit var postProcessingRouter: PostProcessingRouter
     private lateinit var stateMachine: BubbleStateMachine
@@ -210,6 +216,11 @@ class BubbleOverlayService : Service(),
         postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
         behaviorSettings = BehaviorSettingsRepository(applicationContext)
         bubbleSettings = BubbleSettingsRepository(applicationContext)
+        historySettings = HistorySettingsRepository(applicationContext)
+        historyRepository = DictationHistoryRepository(
+            dao = WhisperBoardDatabase.getInstance(applicationContext).dictationHistoryDao(),
+            retentionProvider = { historySettings.retention.first() },
+        )
 
         val connectivityManager =
             getSystemService(CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
@@ -487,6 +498,16 @@ class BubbleOverlayService : Service(),
                 val raw = engineRouter.transcribe(samples, activeLanguage)
                 val polished = polishIfEnabled(raw)
                 clipboardDelivery.deliver(polished) // stages for the result view
+                // Persist alongside the clipboard delivery so the bubble's
+                // standalone-mode utterances flow into the same dictation
+                // history as the IME's. The bubble has no focused-field
+                // package name, so `targetAppName` is null here. Repository
+                // honours retention internally; off ⇒ no-op.
+                persistFromBubble(
+                    rawTranscript = raw,
+                    polishedTranscript = polished,
+                    detectedLanguage = activeLanguage,
+                )
                 handleEvent(BubbleEvent.TranscriptReady(polished))
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription failed", e)
@@ -516,6 +537,38 @@ class BubbleOverlayService : Service(),
     private fun writeToClipboard(text: String) {
         val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
         cm.setPrimaryClip(android.content.ClipData.newPlainText("Whisper Board", text))
+    }
+
+    /**
+     * Mirror of [com.whisperboard.ui.KeyboardViewModel.persistDictationEntry].
+     * Persists the bubble's just-finished utterance into the dictation
+     * history. No `targetAppName` — the bubble surfaces a clipboard write,
+     * not a focused-field write, so there's no app to attribute it to.
+     */
+    private suspend fun persistFromBubble(
+        rawTranscript: String,
+        polishedTranscript: String,
+        detectedLanguage: String,
+    ) {
+        if (polishedTranscript.isBlank() && rawTranscript.isBlank()) return
+        val languageField = if (detectedLanguage == "auto" || detectedLanguage.isBlank()) {
+            ""
+        } else {
+            detectedLanguage
+        }
+        try {
+            historyRepository.record(
+                DictationEntry(
+                    polishedTranscript = polishedTranscript,
+                    rawTranscript = rawTranscript,
+                    timestampMs = System.currentTimeMillis(),
+                    detectedLanguages = languageField,
+                    targetAppName = null,
+                ),
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to persist bubble dictation entry", e)
+        }
     }
 
     private fun showToast(message: String) {
