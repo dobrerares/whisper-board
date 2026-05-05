@@ -118,6 +118,7 @@ class WhisperBoardIME : InputMethodService(),
             targetAppNameProvider = { currentInputEditorInfo?.packageName },
             historyRepository = historyRepository,
             historySettings = historySettings,
+            behaviorSettings = behaviorSettings,
         )
         viewModel.setEngineRouter(engineRouter)
         viewModel.setPostProcessingRouter(postProcessingRouter)

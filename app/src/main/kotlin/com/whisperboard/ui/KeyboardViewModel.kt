@@ -6,6 +6,7 @@ import android.view.inputmethod.InputConnection
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.whisperboard.audio.AudioPipeline
+import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.history.DictationEntry
 import com.whisperboard.model.history.DictationHistoryRepository
@@ -65,6 +66,13 @@ class KeyboardViewModel(
      * preview behaviour.
      */
     private val historySettings: HistorySettingsRepository? = null,
+    /**
+     * Behavior settings (auto-insert / auto-copy). Optional so headless
+     * tests can still construct the view-model. When wired, the IME's
+     * transcript area uses [autoInsertEnabled] (alongside [historyRetention])
+     * to choose between the history scroll and the single-utterance preview.
+     */
+    behaviorSettings: BehaviorSettingsRepository? = null,
     /**
      * How long the active-language chip flashes the *detected* language after
      * each utterance before reverting to the user's selected state. Pulled
@@ -197,6 +205,19 @@ class KeyboardViewModel(
                 viewModelScope,
                 SharingStarted.Eagerly,
                 HistorySettingsRepository.DEFAULT_RETENTION,
+            )
+
+    /**
+     * Live auto-insert toggle. The IME's transcript area uses this with
+     * [historyRetention] to decide between the history scroll (auto-insert
+     * ON + retention ON) and the single-utterance preview (anything else).
+     */
+    val autoInsertEnabled: StateFlow<Boolean> =
+        (behaviorSettings?.autoInsertEnabled ?: flowOf(BehaviorSettingsRepository.DEFAULT_AUTO_INSERT))
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                BehaviorSettingsRepository.DEFAULT_AUTO_INSERT,
             )
 
     /**
