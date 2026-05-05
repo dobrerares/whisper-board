@@ -45,3 +45,17 @@ Native code: `third_party/whisper.cpp` (git submodule)
 ## Git
 
 Solo project — commit and push directly to main.
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues at `dobrerares/whisper-board`, accessed via `gh` CLI. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default canonical vocabulary — `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context layout — `CONTEXT.md` + `docs/adr/` at the repo root, created lazily by `/grill-with-docs`. See `docs/agents/domain.md`.
