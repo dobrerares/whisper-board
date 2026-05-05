@@ -21,6 +21,7 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.lifecycle.Lifecycle
@@ -68,7 +69,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -260,6 +263,7 @@ class BubbleOverlayService : Service(),
         observeWaveform()
         observeAutoCopyToggle()
         observeVisibility()
+        observeRecordingForegroundType()
 
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
@@ -304,29 +308,50 @@ class BubbleOverlayService : Service(),
 
     private fun startForegroundIfNeeded() {
         ensureNotificationChannel()
-        val notification: Notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+        // Idle attach: declare only SPECIAL_USE. Android 14+ rejects the
+        // combined MICROPHONE | SPECIAL_USE bitmask if the service isn't
+        // actively recording at attach time, which silently breaks
+        // AlwaysVisible — the overlay never gets to the foreground state and
+        // never attaches. We upgrade to MICROPHONE while recording (see
+        // observeRecordingForegroundType) and drop back on stop.
+        setForegroundType(recording = false)
+    }
+
+    private fun setForegroundType(recording: Boolean) {
+        val notification: Notification = buildBubbleNotification()
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                val type = if (recording) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIFICATION_ID, notification, type)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                // Android 10–13 accepts the type bitmask; combined types are
+                // permitted regardless of mic-active state on these versions.
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+            }
+            else -> {
+                // Pre-Android 10 has no per-call type argument.
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }
+    }
+
+    private fun buildBubbleNotification(): Notification =
+        Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_mic)
             .setContentTitle("Whisper Board")
             .setContentText("Bubble is active")
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-    }
 
     private fun ensureNotificationChannel() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -780,6 +805,30 @@ class BubbleOverlayService : Service(),
                     refreshOverlayVisibility()
                 }
             }
+        }
+    }
+
+    /**
+     * Re-issue [startForeground] with the right service-type bitmask whenever
+     * the bubble enters or leaves [BubbleState.Recording]. On Android 14+
+     * (`UPSIDE_DOWN_CAKE`, SDK 34) the OS rejects a combined
+     * `MICROPHONE | SPECIAL_USE` type at attach time when the service is not
+     * actively using the mic — which is the case for the bubble's idle state.
+     * We declare only `SPECIAL_USE` at idle and upgrade to `MICROPHONE | SPECIAL_USE`
+     * exactly while the state machine is in `Recording`.
+     *
+     * Source of truth is [composeBubbleState], which [applyTransition] writes
+     * after every state-machine transition. `snapshotFlow` gives us the
+     * `distinctUntilChanged` shape we need for de-duped enter/leave edges.
+     */
+    private fun observeRecordingForegroundType() {
+        serviceScope.launch {
+            snapshotFlow { composeBubbleState.value }
+                .map { it is BubbleState.Recording }
+                .distinctUntilChanged()
+                .collect { isRecording ->
+                    setForegroundType(recording = isRecording)
+                }
         }
     }
 
