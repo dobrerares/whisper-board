@@ -23,6 +23,9 @@ import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.model.history.DictationHistoryRepository
+import com.whisperboard.model.history.HistorySettingsRepository
+import com.whisperboard.model.history.WhisperBoardDatabase
 import com.whisperboard.postprocessing.ApiPostProcessor
 import com.whisperboard.postprocessing.PostProcessingRouter
 import com.whisperboard.postprocessing.PostProcessingSettingsRepository
@@ -69,6 +72,8 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var apiSettingsRepository: ApiSettingsRepository
     private lateinit var postProcessingSettings: PostProcessingSettingsRepository
     private lateinit var behaviorSettings: BehaviorSettingsRepository
+    private lateinit var historySettings: HistorySettingsRepository
+    private lateinit var historyRepository: DictationHistoryRepository
     private lateinit var engineRouter: EngineRouter
     private lateinit var postProcessingRouter: PostProcessingRouter
     private lateinit var viewModel: KeyboardViewModel
@@ -89,6 +94,11 @@ class WhisperBoardIME : InputMethodService(),
         apiSettingsRepository = ApiSettingsRepository(applicationContext)
         postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
         behaviorSettings = BehaviorSettingsRepository(applicationContext)
+        historySettings = HistorySettingsRepository(applicationContext)
+        historyRepository = DictationHistoryRepository(
+            dao = WhisperBoardDatabase.getInstance(applicationContext).dictationHistoryDao(),
+            retentionProvider = { historySettings.retention.first() },
+        )
 
         val connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -102,6 +112,12 @@ class WhisperBoardIME : InputMethodService(),
             audioPipeline = audioPipeline,
             languageRepository = languageRepository,
             autoInsertEnabledProvider = { behaviorSettings.autoInsertEnabled.first() },
+            // Surface the focused field's owning package name so each
+            // persisted entry can record where the words went. The IME has
+            // `currentInputEditorInfo` available between onStartInput/onFinishInput.
+            targetAppNameProvider = { currentInputEditorInfo?.packageName },
+            historyRepository = historyRepository,
+            historySettings = historySettings,
         )
         viewModel.setEngineRouter(engineRouter)
         viewModel.setPostProcessingRouter(postProcessingRouter)

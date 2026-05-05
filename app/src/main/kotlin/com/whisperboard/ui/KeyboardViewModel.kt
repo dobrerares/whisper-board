@@ -7,6 +7,10 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.model.LanguageRepository
+import com.whisperboard.model.history.DictationEntry
+import com.whisperboard.model.history.DictationHistoryRepository
+import com.whisperboard.model.history.HistoryRetention
+import com.whisperboard.model.history.HistorySettingsRepository
 import com.whisperboard.postprocessing.PostProcessingContext
 import com.whisperboard.postprocessing.PostProcessingOutcome
 import com.whisperboard.postprocessing.PostProcessingRouter
@@ -20,6 +24,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -41,6 +47,25 @@ class KeyboardViewModel(
      */
     autoInsertEnabledProvider: suspend () -> Boolean = { true },
     /**
+     * The package name of the focused field's owning app, surfaced to the
+     * [TranscriptDelivery] callback so each persisted dictation entry can
+     * record where the words went. Defaults to `null` so headless tests
+     * don't need to fake an `EditorInfo`.
+     */
+    targetAppNameProvider: () -> String? = { null },
+    /**
+     * History persistence. Optional so headless tests (and the bubble
+     * service, which has its own history call site) can construct a
+     * KeyboardViewModel without a Room database.
+     */
+    private val historyRepository: DictationHistoryRepository? = null,
+    /**
+     * Privacy / retention settings. Optional alongside [historyRepository] —
+     * when null, the IME falls back to the pre-slice-6b single-utterance
+     * preview behaviour.
+     */
+    private val historySettings: HistorySettingsRepository? = null,
+    /**
      * How long the active-language chip flashes the *detected* language after
      * each utterance before reverting to the user's selected state. Pulled
      * out as a constructor parameter so tests can collapse it to zero.
@@ -53,6 +78,17 @@ class KeyboardViewModel(
 
         /** Default flash duration (~1.5s per the slice 5 brief). */
         const val DETECTED_FLASH_MS_DEFAULT: Long = 1_500L
+
+        /**
+         * Maximum entries surfaced in the IME's transcript-area history
+         * scroll. The Settings → History page renders the unbounded list.
+         * 50 is large enough to feel "scrollable" without making the IME
+         * lazy column carry more than a screenful past the immediate
+         * context, and is comfortably below the smallest configurable
+         * retention (25). When retention is set lower than this limit the
+         * scroll naturally renders fewer rows.
+         */
+        const val HISTORY_PREVIEW_LIMIT: Int = 50
     }
 
     @Volatile
@@ -75,8 +111,15 @@ class KeyboardViewModel(
      * Decides where each finished transcript goes — focused field (auto-insert)
      * or staged preview (auto-insert off). Pulled out so the decision is
      * unit-testable without faking [AudioPipeline] / [LanguageRepository].
+     *
+     * The `targetAppNameProvider` is forwarded so the delivery snapshots the
+     * focused field's package name at delivery time; persistence reads it
+     * from `delivery.lastTargetAppName()`.
      */
-    private val delivery = TranscriptDelivery(autoInsertEnabledProvider)
+    private val delivery = TranscriptDelivery(
+        autoInsertEnabledProvider = autoInsertEnabledProvider,
+        targetAppNameProvider = targetAppNameProvider,
+    )
 
     val transcribedText: StateFlow<String> = delivery.transcribedText
 
@@ -141,6 +184,45 @@ class KeyboardViewModel(
     private val _errorMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val errorMessage: SharedFlow<String> = _errorMessage.asSharedFlow()
 
+    /**
+     * Live retention picker value. Sourced from [HistorySettingsRepository]
+     * when wired; defaults to [HistoryRetention.OneHundred] for tests that
+     * don't pass settings through. The IME's history scroll uses this to
+     * decide whether to render the scroll at all (off ⇒ fall back to the
+     * single-utterance preview).
+     */
+    val historyRetention: StateFlow<HistoryRetention> =
+        (historySettings?.retention ?: flowOf(HistorySettingsRepository.DEFAULT_RETENTION))
+            .stateIn(
+                viewModelScope,
+                SharingStarted.Eagerly,
+                HistorySettingsRepository.DEFAULT_RETENTION,
+            )
+
+    /**
+     * Newest-first stream of recent dictation entries for the IME's history
+     * scroll. Switches to an empty list whenever retention is off, so the
+     * UI can fall back to the single-utterance preview cleanly without a
+     * separate "is history on" check.
+     *
+     * Capped at [HISTORY_PREVIEW_LIMIT] for the IME view; the Settings →
+     * History page renders the unbounded `all()` flow instead.
+     */
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    val recentDictationEntries: StateFlow<List<DictationEntry>> = run {
+        val repo = historyRepository
+        val settings = historySettings
+        val flow = if (repo != null && settings != null) {
+            settings.retention.flatMapLatest { retention ->
+                if (retention.isEnabled) repo.recent(HISTORY_PREVIEW_LIMIT)
+                else flowOf(emptyList())
+            }
+        } else {
+            flowOf(emptyList())
+        }
+        flow.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    }
+
     val waveformData: StateFlow<FloatArray> = audioPipeline.waveformData
 
     var currentImeAction: Int = EditorInfo.IME_ACTION_DONE
@@ -201,6 +283,11 @@ class KeyboardViewModel(
 
                 val finalText = polishIfEnabled(rawTranscript)
                 delivery.deliver(finalText)
+                persistDictationEntry(
+                    rawTranscript = rawTranscript,
+                    polishedTranscript = finalText,
+                    detectedLanguage = recordingLanguage,
+                )
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription failed", e)
                 _errorMessage.tryEmit(e.message ?: "Transcription failed")
@@ -315,6 +402,70 @@ class KeyboardViewModel(
                 languageRepository.removeFavorite(code)
             } else {
                 languageRepository.addFavorite(code)
+            }
+        }
+    }
+
+    /**
+     * Re-commit a previously persisted entry into the focused field. Used by
+     * the IME's history scroll: tapping an entry replays its polished text.
+     * No-op when the input connection is null (nothing focused) or the
+     * entry's polished text is empty.
+     */
+    fun reinsertEntry(entry: DictationEntry, inputConnection: InputConnection?) {
+        if (inputConnection == null || entry.polishedTranscript.isEmpty()) return
+        inputConnection.commitText(entry.polishedTranscript, 1)
+    }
+
+    /**
+     * Delete an entry by id from the persisted history. Used by the
+     * long-press context menu and the swipe-to-delete gesture in the
+     * history scroll. No-op when no repository is wired.
+     */
+    fun deleteEntry(id: Long) {
+        val repo = historyRepository ?: return
+        viewModelScope.launch {
+            repo.delete(id)
+        }
+    }
+
+    /**
+     * Persist a freshly delivered entry. Reads the package name snapshot
+     * captured by [delivery] at delivery time, so the value reflects where
+     * the words actually went rather than wherever focus may have moved
+     * to since. No-ops when no [historyRepository] is wired or when the
+     * polished text is blank.
+     */
+    private fun persistDictationEntry(
+        rawTranscript: String,
+        polishedTranscript: String,
+        detectedLanguage: String,
+    ) {
+        val repo = historyRepository ?: return
+        if (polishedTranscript.isBlank() && rawTranscript.isBlank()) return
+        val targetApp = delivery.lastTargetAppName()
+        // Persist the language string we asked Whisper to use. Per the brief
+        // this is the detected language for the utterance — when the chip
+        // is on `auto` we don't yet know what Whisper actually picked, so
+        // an empty `detectedLanguages` string is honest: "unknown".
+        val languageField = if (detectedLanguage == "auto" || detectedLanguage.isBlank()) {
+            ""
+        } else {
+            detectedLanguage
+        }
+        viewModelScope.launch {
+            try {
+                repo.record(
+                    DictationEntry(
+                        polishedTranscript = polishedTranscript,
+                        rawTranscript = rawTranscript,
+                        timestampMs = System.currentTimeMillis(),
+                        detectedLanguages = languageField,
+                        targetAppName = targetApp,
+                    ),
+                )
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to persist dictation entry", e)
             }
         }
     }
