@@ -3,6 +3,16 @@
 
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The bubble surface — see ADR-0001. SYSTEM_ALERT_WINDOW grants the
+         floating overlay window; FOREGROUND_SERVICE keeps the bubble's
+         microphone capture honest under foreground-service requirements;
+         FOREGROUND_SERVICE_MICROPHONE is the typed permission required on
+         API 34+ for mic-using foreground services. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="Whisper Board"
@@ -30,6 +40,31 @@
             <meta-data
                 android:name="android.view.im"
                 android:resource="@xml/method" />
+        </service>
+
+        <!-- Bubble overlay foreground service — hosts the floating window
+             that lets the user dictate from anywhere. Standalone mode only;
+             the in-place insertion upgrade is issue #7. -->
+        <service
+            android:name=".bubble.BubbleOverlayService"
+            android:label="Whisper Board bubble"
+            android:foregroundServiceType="microphone|specialUse"
+            android:exported="false">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="floating dictation overlay" />
+        </service>
+
+        <!-- Quick Settings tile — alternative summon path. -->
+        <service
+            android:name=".bubble.BubbleTileService"
+            android:label="Whisper Board"
+            android:icon="@drawable/ic_mic"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
         </service>
     </application>
 </manifest>

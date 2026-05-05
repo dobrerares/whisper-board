@@ -14,6 +14,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.whisperboard.R
+import com.whisperboard.bubble.BubbleSettingsRepository
+import com.whisperboard.bubble.BubbleVisibilityMode
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.DownloadProgress
 import com.whisperboard.model.LanguageRepository
@@ -48,6 +50,7 @@ import kotlinx.coroutines.launch
 private enum class SettingsPage(val title: String) {
     Root("Whisper Board"),
     Behavior("Behavior"),
+    Bubble("Bubble"),
     Privacy("Privacy"),
     Languages("Languages"),
     History("History"),
@@ -64,11 +67,16 @@ fun SettingsScreen(
     apiSettingsRepository: ApiSettingsRepository,
     postProcessingSettingsRepository: PostProcessingSettingsRepository,
     behaviorSettingsRepository: BehaviorSettingsRepository,
+    bubbleSettingsRepository: BubbleSettingsRepository,
     imeEnabled: Boolean = true,
     imeSelected: Boolean = true,
+    overlayPermissionGranted: Boolean = false,
     onOpenImeSettings: () -> Unit = {},
     onOpenImePicker: () -> Unit = {},
     onPickFile: () -> Unit = {},
+    onRequestOverlayPermission: () -> Unit = {},
+    onStartBubbleService: () -> Unit = {},
+    onStopBubbleService: () -> Unit = {},
     pendingFileName: String? = null,
     pendingUri: android.net.Uri? = null,
     onImportComplete: () -> Unit = {},
@@ -105,6 +113,14 @@ fun SettingsScreen(
             )
             SettingsPage.Behavior -> BehaviorPage(
                 behaviorSettingsRepository = behaviorSettingsRepository,
+                modifier = Modifier.padding(padding),
+            )
+            SettingsPage.Bubble -> BubblePage(
+                bubbleSettingsRepository = bubbleSettingsRepository,
+                overlayPermissionGranted = overlayPermissionGranted,
+                onRequestOverlayPermission = onRequestOverlayPermission,
+                onStartBubbleService = onStartBubbleService,
+                onStopBubbleService = onStopBubbleService,
                 modifier = Modifier.padding(padding),
             )
             SettingsPage.Privacy -> PrivacyPage(modifier = Modifier.padding(padding))
@@ -165,6 +181,7 @@ private fun RootPage(
         items(
             listOf(
                 SettingsPage.Behavior to "How transcripts reach the focused field or clipboard",
+                SettingsPage.Bubble to "Floating overlay for dictating from anywhere",
                 SettingsPage.Privacy to "Retention, telemetry, and what's sent to the LLM",
                 SettingsPage.Languages to "Favourite languages for the picker and IME switcher",
                 SettingsPage.History to "Recent dictation entries",
@@ -279,6 +296,141 @@ private fun ToggleRow(
             )
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+// --- Bubble page ---
+
+@Composable
+private fun BubblePage(
+    bubbleSettingsRepository: BubbleSettingsRepository,
+    overlayPermissionGranted: Boolean,
+    onRequestOverlayPermission: () -> Unit,
+    onStartBubbleService: () -> Unit,
+    onStopBubbleService: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scope = rememberCoroutineScope()
+    val mode by bubbleSettingsRepository.visibilityMode
+        .collectAsState(initial = BubbleSettingsRepository.DEFAULT_VISIBILITY)
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        // Permission card — surfaces the SYSTEM_ALERT_WINDOW grant when missing.
+        if (!overlayPermissionGranted) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text(
+                        text = "Display over other apps",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "The bubble is a floating overlay. Android needs " +
+                            "you to grant the overlay permission before it can " +
+                            "appear on top of other apps.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(onClick = onRequestOverlayPermission) {
+                        Text("Open System Settings")
+                    }
+                }
+            }
+        }
+
+        // Visibility picker — the brief's single new setting.
+        Text(
+            text = "Bubble visibility",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "When the floating dictation overlay shows itself.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        BubbleVisibilityMode.entries.forEach { entry ->
+            BubbleModeRow(
+                mode = entry,
+                selected = entry == mode,
+                onSelect = {
+                    scope.launch {
+                        bubbleSettingsRepository.setVisibilityMode(entry)
+                        // The service observes the visibility flow and
+                        // attaches/detaches accordingly. We still nudge it
+                        // explicitly so the user sees an immediate effect.
+                        if (entry == BubbleVisibilityMode.Disabled) {
+                            onStopBubbleService()
+                        } else if (overlayPermissionGranted) {
+                            onStartBubbleService()
+                        }
+                    }
+                },
+                enabled = overlayPermissionGranted || entry == BubbleVisibilityMode.Disabled,
+            )
+        }
+    }
+}
+
+@Composable
+private fun BubbleModeRow(
+    mode: BubbleVisibilityMode,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    enabled: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = onSelect,
+            enabled = enabled,
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = when (mode) {
+                    BubbleVisibilityMode.AlwaysVisible -> "Always visible"
+                    BubbleVisibilityMode.SummonedOnly -> "Summoned only"
+                    BubbleVisibilityMode.Disabled -> "Disabled"
+                },
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Text(
+                text = when (mode) {
+                    BubbleVisibilityMode.AlwaysVisible ->
+                        "Default. The bubble stays on screen unless lockscreen, " +
+                            "fullscreen apps, or an off-edge drag hide it."
+                    BubbleVisibilityMode.SummonedOnly ->
+                        "The bubble appears only after a Quick Settings tile tap " +
+                            "or in-app summon."
+                    BubbleVisibilityMode.Disabled ->
+                        "Bubble service stops; the IME remains available."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

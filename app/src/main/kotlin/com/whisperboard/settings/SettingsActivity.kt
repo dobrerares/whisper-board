@@ -15,6 +15,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import com.whisperboard.bubble.BubbleOverlayService
+import com.whisperboard.bubble.BubbleSettingsRepository
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
@@ -31,6 +33,7 @@ class SettingsActivity : ComponentActivity() {
 
     private val imeEnabled = mutableStateOf(false)
     private val imeSelected = mutableStateOf(false)
+    private val overlayPermissionGranted = mutableStateOf(false)
     private val pendingFileName = mutableStateOf<String?>(null)
     private val pendingUri = mutableStateOf<android.net.Uri?>(null)
 
@@ -61,6 +64,7 @@ class SettingsActivity : ComponentActivity() {
         val apiSettingsRepository = ApiSettingsRepository(applicationContext)
         val postProcessingSettingsRepository = PostProcessingSettingsRepository(applicationContext)
         val behaviorSettingsRepository = BehaviorSettingsRepository(applicationContext)
+        val bubbleSettingsRepository = BubbleSettingsRepository(applicationContext)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -111,8 +115,10 @@ class SettingsActivity : ComponentActivity() {
                         apiSettingsRepository = apiSettingsRepository,
                         postProcessingSettingsRepository = postProcessingSettingsRepository,
                         behaviorSettingsRepository = behaviorSettingsRepository,
+                        bubbleSettingsRepository = bubbleSettingsRepository,
                         imeEnabled = imeEnabled.value,
                         imeSelected = imeSelected.value,
+                        overlayPermissionGranted = overlayPermissionGranted.value,
                         onOpenImeSettings = {
                             startActivity(Intent(Settings.ACTION_INPUT_METHOD_SETTINGS))
                         },
@@ -122,6 +128,17 @@ class SettingsActivity : ComponentActivity() {
                         },
                         onPickFile = {
                             filePickerLauncher.launch(arrayOf("*/*"))
+                        },
+                        onRequestOverlayPermission = {
+                            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
+                                .setData(android.net.Uri.parse("package:$packageName"))
+                            startActivity(intent)
+                        },
+                        onStartBubbleService = {
+                            BubbleOverlayService.start(applicationContext)
+                        },
+                        onStopBubbleService = {
+                            BubbleOverlayService.stop(applicationContext)
                         },
                         pendingFileName = pendingFileName.value,
                         pendingUri = pendingUri.value,
@@ -138,6 +155,7 @@ class SettingsActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshImeStatus()
+        refreshOverlayStatus()
     }
 
     private fun refreshImeStatus() {
@@ -147,5 +165,9 @@ class SettingsActivity : ComponentActivity() {
         imeSelected.value = Settings.Secure.getString(
             contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD
         ) == myId
+    }
+
+    private fun refreshOverlayStatus() {
+        overlayPermissionGranted.value = BubbleOverlayService.hasOverlayPermission(this)
     }
 }
