@@ -66,5 +66,26 @@
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
             </intent-filter>
         </service>
+
+        <!--
+            Accessibility service for the bubble's *in-place insertion* upgrade.
+            Per ADR-0001 this is a pure upgrade — the bubble's standalone mode
+            keeps working without it. When granted, the polished transcript is
+            written directly into the focused editable field via
+            ACTION_SET_TEXT / ACTION_PASTE instead of being auto-copied to the
+            clipboard.
+        -->
+        <service
+            android:name=".accessibility.WhisperBoardAccessibilityService"
+            android:label="@string/accessibility_service_summary"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
     </application>
 </manifest>

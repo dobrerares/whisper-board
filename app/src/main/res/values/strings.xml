@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        Surfaced in the system Accessibility settings page. Wording matches
+        ADR-0001: the service is a *pure upgrade* — granting it lets the
+        bubble write directly into the focused field via in-place
+        insertion instead of falling back to clipboard copy.
+    -->
+    <string name="accessibility_service_summary">In-place insertion for Whisper Board</string>
+    <string name="accessibility_service_description">
+        Lets Whisper Board write your dictated text directly into the focused
+        editable field. Without this permission the bubble still works — it
+        copies the transcript to the clipboard and you paste manually. With
+        the permission granted, the polished transcript appears in your
+        text field automatically.
+    </string>
+</resources>
