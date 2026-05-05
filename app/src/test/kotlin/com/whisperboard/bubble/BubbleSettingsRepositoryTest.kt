@@ -1,6 +1,8 @@
 package com.whisperboard.bubble
 
+import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import androidx.datastore.preferences.core.Preferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
@@ -17,6 +19,7 @@ import org.junit.Before
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Covers persistence of the bubble visibility mode and bubble position.
@@ -34,17 +37,14 @@ class BubbleSettingsRepositoryTest {
     private lateinit var scope: CoroutineScope
     private lateinit var job: Job
     private lateinit var repository: BubbleSettingsRepository
+    private val storeCounter = AtomicInteger(0)
 
     @Before
     fun setUp() {
         tempDir = Files.createTempDirectory("bubble-prefs-test").toFile()
         job = SupervisorJob()
         scope = CoroutineScope(UnconfinedTestDispatcher() + job)
-        val store = PreferenceDataStoreFactory.create(
-            scope = scope,
-            produceFile = { File(tempDir, "bubble_prefs.preferences_pb") },
-        )
-        repository = BubbleSettingsRepository(store)
+        repository = BubbleSettingsRepository(testStore())
     }
 
     @After
@@ -53,6 +53,19 @@ class BubbleSettingsRepositoryTest {
         scope.cancel()
         tempDir.deleteRecursively()
     }
+
+    /**
+     * Builds a fresh in-memory-backed DataStore for each call. Each call uses
+     * a distinct file under the test temp directory so tests that build a
+     * second repository (e.g. the new edge / cooldown / dismissedAt tests)
+     * don't collide with the [Before]-built one.
+     */
+    private fun testStore(): DataStore<Preferences> = PreferenceDataStoreFactory.create(
+        scope = scope,
+        produceFile = {
+            File(tempDir, "bubble_prefs_${storeCounter.incrementAndGet()}.preferences_pb")
+        },
+    )
 
     @Test
     fun `default visibility is AlwaysVisible per the brief`() = runTest {
@@ -135,5 +148,46 @@ class BubbleSettingsRepositoryTest {
         // not in the repository.
         repository.setAccessibilityNudgeDismissed(false)
         assertFalse(repository.accessibilityNudgeDismissed.first())
+    }
+
+    @Test
+    fun `edge defaults to RIGHT when unset`() = runTest {
+        val repo = BubbleSettingsRepository(testStore())
+        assertEquals(Edge.RIGHT, repo.edge.first())
+    }
+
+    @Test
+    fun `setEdge persists and reads back`() = runTest {
+        val repo = BubbleSettingsRepository(testStore())
+        repo.setEdge(Edge.LEFT)
+        assertEquals(Edge.LEFT, repo.edge.first())
+    }
+
+    @Test
+    fun `cooldownMs defaults to 5 minutes`() = runTest {
+        val repo = BubbleSettingsRepository(testStore())
+        assertEquals(5L * 60_000L, repo.cooldownMs.first())
+    }
+
+    @Test
+    fun `setCooldownMs persists and reads back`() = runTest {
+        val repo = BubbleSettingsRepository(testStore())
+        repo.setCooldownMs(15L * 60_000L)
+        assertEquals(15L * 60_000L, repo.cooldownMs.first())
+    }
+
+    @Test
+    fun `dismissedAt defaults to null`() = runTest {
+        val repo = BubbleSettingsRepository(testStore())
+        assertEquals(null, repo.dismissedAt.first())
+    }
+
+    @Test
+    fun `setDismissedAt persists and clearDismissedAt removes`() = runTest {
+        val repo = BubbleSettingsRepository(testStore())
+        repo.setDismissedAt(123_456L)
+        assertEquals(123_456L, repo.dismissedAt.first())
+        repo.clearDismissedAt()
+        assertEquals(null, repo.dismissedAt.first())
     }
 }
