@@ -22,6 +22,9 @@ import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
+import com.whisperboard.postprocessing.ApiPostProcessor
+import com.whisperboard.postprocessing.PostProcessingRouter
+import com.whisperboard.postprocessing.PostProcessingSettingsRepository
 import com.whisperboard.transcription.ApiEngine
 import com.whisperboard.transcription.ApiSettingsRepository
 import com.whisperboard.transcription.EngineRouter
@@ -35,6 +38,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -62,7 +66,9 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var languageRepository: LanguageRepository
     private lateinit var modelRepository: ModelRepository
     private lateinit var apiSettingsRepository: ApiSettingsRepository
+    private lateinit var postProcessingSettings: PostProcessingSettingsRepository
     private lateinit var engineRouter: EngineRouter
+    private lateinit var postProcessingRouter: PostProcessingRouter
     private lateinit var viewModel: KeyboardViewModel
 
     private val apiClient = OkHttpClient.Builder()
@@ -79,13 +85,19 @@ class WhisperBoardIME : InputMethodService(),
         languageRepository = LanguageRepository(applicationContext)
         modelRepository = ModelRepository(applicationContext)
         apiSettingsRepository = ApiSettingsRepository(applicationContext)
+        postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
 
         val connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         engineRouter = EngineRouter(apiSettingsRepository, connectivityManager)
+        postProcessingRouter = PostProcessingRouter(
+            polishModeProvider = { postProcessingSettings.polishModeEnabled.first() },
+            strategyProvider = { postProcessingSettings.strategy.first() },
+        )
 
         viewModel = KeyboardViewModel(audioPipeline, languageRepository)
         viewModel.setEngineRouter(engineRouter)
+        viewModel.setPostProcessingRouter(postProcessingRouter)
 
         // Watch active model → update local engine
         serviceScope.launch {
@@ -115,7 +127,7 @@ class WhisperBoardIME : InputMethodService(),
             }
         }
 
-        // Watch API settings → rebuild API engine
+        // Watch API settings → rebuild API engine + API post-processor
         serviceScope.launch {
             combine(
                 apiSettingsRepository.provider,
@@ -130,13 +142,44 @@ class WhisperBoardIME : InputMethodService(),
                         } else {
                             null
                         }
+                        // The post-processor reuses the same base URL + API key but
+                        // talks to /chat/completions with a chat-capable model.
+                        // The transcription `model` field is a Whisper model and
+                        // is not appropriate here, so we pick a sensible chat
+                        // default per provider.
+                        postProcessingRouter.apiPostProcessor = if (config != null) {
+                            ApiPostProcessor(
+                                client = apiClient,
+                                baseUrl = config.baseUrl,
+                                apiKey = config.apiKey,
+                                model = chatModelFor(apiSettingsRepository.provider.first()),
+                            )
+                        } else {
+                            null
+                        }
                     } catch (e: Exception) {
                         Log.e(TAG, "Failed to configure API engine", e)
                         engineRouter.apiEngine = null
+                        postProcessingRouter.apiPostProcessor = null
                     }
                 }
         }
     }
+
+    /**
+     * Default chat-completions model for each provider. Used by the
+     * post-processor; the transcription engine continues to use the Whisper
+     * model from settings. Slice #6 will give users an explicit chat-model
+     * picker; until then a sensible default keeps the polish stage usable
+     * out of the box.
+     */
+    private fun chatModelFor(provider: com.whisperboard.transcription.ApiProvider): String =
+        when (provider) {
+            com.whisperboard.transcription.ApiProvider.OPENAI -> "gpt-4o-mini"
+            com.whisperboard.transcription.ApiProvider.GROQ -> "llama-3.1-8b-instant"
+            com.whisperboard.transcription.ApiProvider.SELF_HOSTED,
+            com.whisperboard.transcription.ApiProvider.CUSTOM -> "default"
+        }
 
     override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)

@@ -7,6 +7,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.model.LanguageRepository
+import com.whisperboard.postprocessing.PostProcessingContext
+import com.whisperboard.postprocessing.PostProcessingOutcome
+import com.whisperboard.postprocessing.PostProcessingRouter
 import com.whisperboard.transcription.EngineRouter
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -38,6 +41,9 @@ class KeyboardViewModel(
     @Volatile
     private var engineRouter: EngineRouter? = null
 
+    @Volatile
+    private var postProcessingRouter: PostProcessingRouter? = null
+
     /** Language snapshot taken when recording starts — used for transcription. */
     private var recordingLanguage: String = "auto"
 
@@ -46,6 +52,14 @@ class KeyboardViewModel(
 
     private val _transcribedText = MutableStateFlow("")
     val transcribedText: StateFlow<String> = _transcribedText.asStateFlow()
+
+    /**
+     * When true, the most recent transcript came back as raw text because the
+     * post-processor was attempted but failed. Used to surface a small
+     * "polish unavailable" indicator next to the transcript.
+     */
+    private val _polishUnavailable = MutableStateFlow(false)
+    val polishUnavailable: StateFlow<Boolean> = _polishUnavailable.asStateFlow()
 
     val activeLanguage: StateFlow<String> = languageRepository.activeLanguage
         .stateIn(viewModelScope, SharingStarted.Eagerly, "auto")
@@ -65,6 +79,10 @@ class KeyboardViewModel(
 
     fun setEngineRouter(router: EngineRouter?) {
         engineRouter = router
+    }
+
+    fun setPostProcessingRouter(router: PostProcessingRouter?) {
+        postProcessingRouter = router
     }
 
     fun startRecording() {
@@ -103,10 +121,12 @@ class KeyboardViewModel(
                 }
                 _isProcessing.value = true
                 val start = System.currentTimeMillis()
-                val text = router.transcribe(samples, recordingLanguage)
+                val rawTranscript = router.transcribe(samples, recordingLanguage)
                 val elapsed = System.currentTimeMillis() - start
-                Log.d(TAG, "Transcription done in ${elapsed}ms: \"$text\"")
-                _transcribedText.value = text
+                Log.d(TAG, "Transcription done in ${elapsed}ms: \"$rawTranscript\"")
+
+                val finalText = polishIfEnabled(rawTranscript)
+                _transcribedText.value = finalText
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription failed", e)
                 _errorMessage.tryEmit(e.message ?: "Transcription failed")
@@ -129,6 +149,39 @@ class KeyboardViewModel(
         if (text.isNotEmpty() && inputConnection != null) {
             inputConnection.commitText(text, 1)
             _transcribedText.value = ""
+            _polishUnavailable.value = false
+        }
+    }
+
+    /**
+     * Run the raw transcript through the post-processor when one is wired and
+     * polish mode is on. Returns the raw transcript unchanged when polish is
+     * skipped or fails — words are never lost. Updates [polishUnavailable]
+     * so the UI can show a small indicator when fallback occurred.
+     */
+    private suspend fun polishIfEnabled(rawTranscript: String): String {
+        val postRouter = postProcessingRouter ?: run {
+            _polishUnavailable.value = false
+            return rawTranscript
+        }
+        val outcome = postRouter.polish(
+            rawTranscript = rawTranscript,
+            context = PostProcessingContext(),
+        )
+        return when (outcome) {
+            is PostProcessingOutcome.Polished -> {
+                _polishUnavailable.value = false
+                outcome.text
+            }
+            is PostProcessingOutcome.Skipped -> {
+                _polishUnavailable.value = false
+                outcome.text
+            }
+            is PostProcessingOutcome.Fallback -> {
+                Log.w(TAG, "Post-processing fell back to raw: ${outcome.reason}")
+                _polishUnavailable.value = true
+                outcome.text
+            }
         }
     }
 
@@ -166,6 +219,7 @@ class KeyboardViewModel(
 
     fun cleanup() {
         engineRouter = null
+        postProcessingRouter = null
     }
 
     override fun onCleared() {

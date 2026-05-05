@@ -31,6 +31,7 @@ fun KeyboardScreen(
     val activeLanguage by viewModel.activeLanguage.collectAsState()
     val favoriteLanguages by viewModel.favoriteLanguages.collectAsState()
     val waveformData by viewModel.waveformData.collectAsState()
+    val polishUnavailable by viewModel.polishUnavailable.collectAsState()
 
     WhisperBoardTheme {
         val snackbarHostState = remember { SnackbarHostState() }
@@ -56,7 +57,8 @@ fun KeyboardScreen(
                 TranscriptionArea(
                     text = transcribedText,
                     onCommit = { viewModel.commitText(inputConnection()) },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    polishUnavailable = polishUnavailable,
                 )
 
                 LanguageChip(
