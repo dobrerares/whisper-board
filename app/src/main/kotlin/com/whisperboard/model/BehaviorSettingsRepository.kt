@@ -1,13 +1,15 @@
 package com.whisperboard.model
 
 import android.content.Context
+import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /**
- * DataStore-backed settings for behavioral toggles that govern how transcripts
+ * DataStore-backed settings for behavioural toggles that govern how transcripts
  * reach the user. Two independent switches:
  *
  * - **Auto-insert** — when on (default), the polished transcript is committed
@@ -21,8 +23,17 @@ import kotlinx.coroutines.flow.map
  *
  * Both names mirror the vocabulary in `CONTEXT.md` exactly. Defaults are ON to
  * preserve the "speak anywhere, get clean text" pitch.
+ *
+ * The constructor takes the underlying [DataStore] directly so the repository
+ * can be unit-tested with an in-memory store. Production code uses the
+ * [Context]-based secondary constructor that points at the app-wide
+ * `appDataStore`.
  */
-class BehaviorSettingsRepository(private val context: Context) {
+class BehaviorSettingsRepository(
+    private val dataStore: DataStore<Preferences>,
+) {
+
+    constructor(context: Context) : this(context.appDataStore)
 
     companion object {
         private val KEY_AUTO_INSERT = booleanPreferencesKey("auto_insert_enabled")
@@ -32,19 +43,19 @@ class BehaviorSettingsRepository(private val context: Context) {
         const val DEFAULT_AUTO_COPY = true
     }
 
-    val autoInsertEnabled: Flow<Boolean> = context.appDataStore.data.map { prefs ->
+    val autoInsertEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_AUTO_INSERT] ?: DEFAULT_AUTO_INSERT
     }
 
-    val autoCopyEnabled: Flow<Boolean> = context.appDataStore.data.map { prefs ->
+    val autoCopyEnabled: Flow<Boolean> = dataStore.data.map { prefs ->
         prefs[KEY_AUTO_COPY] ?: DEFAULT_AUTO_COPY
     }
 
     suspend fun setAutoInsertEnabled(enabled: Boolean) {
-        context.appDataStore.edit { it[KEY_AUTO_INSERT] = enabled }
+        dataStore.edit { it[KEY_AUTO_INSERT] = enabled }
     }
 
     suspend fun setAutoCopyEnabled(enabled: Boolean) {
-        context.appDataStore.edit { it[KEY_AUTO_COPY] = enabled }
+        dataStore.edit { it[KEY_AUTO_COPY] = enabled }
     }
 }
