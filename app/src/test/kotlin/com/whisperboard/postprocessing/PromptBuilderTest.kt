@@ -1,6 +1,7 @@
 package com.whisperboard.postprocessing
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -116,26 +117,97 @@ class PromptBuilderTest {
     }
 
     @Test
-    fun `tier 2 with non-empty profile lists the languages`() {
+    fun `tier 2 with only the auto sentinel says language is not declared`() {
+        // `[auto]` is the canonical default for users who skipped onboarding —
+        // it must behave identically to an empty profile so we don't muddle
+        // the LLM's signal with a UI sentinel.
+        val pair = PromptBuilder.build(
+            rawTranscript = "anything",
+            languageProfile = setOf("auto"),
+        )
+        assertTrue(
+            "auto-only profile must produce a 'not declared' line; got:\n${pair.system}",
+            pair.system.contains("not declared", ignoreCase = true),
+        )
+    }
+
+    @Test
+    fun `tier 2 with monolingual profile names the language by display name`() {
+        val pair = PromptBuilder.build(
+            rawTranscript = "anything",
+            languageProfile = setOf("en"),
+        )
+        assertTrue(
+            "monolingual profile must mention the language by display name; got:\n${pair.system}",
+            pair.system.contains("English"),
+        )
+        assertTrue(
+            "monolingual profile must say the user speaks X; got:\n${pair.system}",
+            pair.system.contains("speaks", ignoreCase = true),
+        )
+    }
+
+    @Test
+    fun `tier 2 with monolingual profile does not include code-switching recovery clause`() {
+        // Code-switching is meaningful only when the user speaks 2+ languages;
+        // including the clause for a monolingual profile would invite hallucinated
+        // "restorations" of fine English text into other scripts.
+        val pair = PromptBuilder.build(
+            rawTranscript = "anything",
+            languageProfile = setOf("en"),
+        )
+        assertFalse(
+            "monolingual profile must NOT include code-switching recovery clause; got:\n${pair.system}",
+            pair.system.contains("phonetic", ignoreCase = true),
+        )
+    }
+
+    @Test
+    fun `tier 2 with multilingual profile lists the languages by display name`() {
         val pair = PromptBuilder.build(
             rawTranscript = "anything",
             languageProfile = setOf("en", "ro"),
         )
-        // The profile parameter is wired but treated as placeholder per the
-        // brief — the actual code-switching context lands in slice 5. Until
-        // then the builder simply names the languages so the prompt is
-        // self-consistent.
         assertTrue(
-            "non-empty profile must produce a 'speaks' line; got:\n${pair.system}",
-            pair.system.contains("speaks", ignoreCase = true),
+            "multilingual profile must include English; got:\n${pair.system}",
+            pair.system.contains("English"),
         )
         assertTrue(
-            "non-empty profile must mention en; got:\n${pair.system}",
-            pair.system.contains("en"),
+            "multilingual profile must include Romanian; got:\n${pair.system}",
+            pair.system.contains("Romanian"),
+        )
+    }
+
+    @Test
+    fun `tier 2 with multilingual profile includes the code-switching recovery clause`() {
+        // Per ADR-0003: the LLM must be told that a phonetically-mangled phrase
+        // could be a code-switched word from another declared language and to
+        // restore it. This is the entire point of the language profile.
+        val pair = PromptBuilder.build(
+            rawTranscript = "anything",
+            languageProfile = setOf("en", "ro"),
         )
         assertTrue(
-            "non-empty profile must mention ro; got:\n${pair.system}",
-            pair.system.contains("ro"),
+            "multilingual profile must mention 'phonetic' transcription artifact; got:\n${pair.system}",
+            pair.system.contains("phonetic", ignoreCase = true),
+        )
+        assertTrue(
+            "multilingual profile must instruct the LLM to restore phrases to their native language; got:\n${pair.system}",
+            pair.system.contains("restore", ignoreCase = true),
+        )
+    }
+
+    @Test
+    fun `tier 2 with multilingual profile filters out the auto sentinel`() {
+        // `auto` is the chip default; it should not pollute the declared-set
+        // count. A profile of `[auto, en]` is semantically monolingual.
+        val pair = PromptBuilder.build(
+            rawTranscript = "anything",
+            languageProfile = setOf("auto", "en"),
+        )
+        assertFalse(
+            "auto-plus-en is monolingual; must NOT include code-switching clause; got:\n${pair.system}",
+            pair.system.contains("phonetic", ignoreCase = true),
         )
     }
 
@@ -144,6 +216,29 @@ class PromptBuilderTest {
         val empty = PromptBuilder.build(rawTranscript = "x", languageProfile = emptySet())
         val mono = PromptBuilder.build(rawTranscript = "x", languageProfile = setOf("en"))
         assertNotEquals(empty.system, mono.system)
+    }
+
+    @Test
+    fun `multilingual profile produces a different system prompt than monolingual`() {
+        val mono = PromptBuilder.build(rawTranscript = "x", languageProfile = setOf("en"))
+        val multi = PromptBuilder.build(rawTranscript = "x", languageProfile = setOf("en", "ro"))
+        assertNotEquals(mono.system, multi.system)
+    }
+
+    @Test
+    fun `tier 2 system prompt forbids cross-language translation in the multilingual case`() {
+        // The clause must instruct restoration, not translation — translation
+        // is S3 in the multilingual taxonomy and is explicitly out of scope
+        // for v1 per ADR-0003.
+        val pair = PromptBuilder.build(
+            rawTranscript = "anything",
+            languageProfile = setOf("en", "ro"),
+        )
+        assertTrue(
+            "multilingual prompt must still forbid translation; got:\n${pair.system}",
+            pair.system.contains("not translate", ignoreCase = true) ||
+                pair.system.contains("do not translate", ignoreCase = true),
+        )
     }
 
     @Test
