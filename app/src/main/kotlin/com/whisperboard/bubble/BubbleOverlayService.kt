@@ -35,6 +35,9 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.whisperboard.R
+import com.whisperboard.accessibility.FallbackReason
+import com.whisperboard.accessibility.WhisperBoardAccessibilityService
+import com.whisperboard.accessibility.WriteResult
 import com.whisperboard.audio.AudioPipeline
 import com.whisperboard.llm.LlmContext
 import com.whisperboard.model.BehaviorSettingsRepository
@@ -183,6 +186,7 @@ class BubbleOverlayService : Service(),
     private lateinit var postProcessingRouter: PostProcessingRouter
     private lateinit var stateMachine: BubbleStateMachine
     private lateinit var clipboardDelivery: BubbleClipboardDelivery
+    private lateinit var accessibilityDelivery: BubbleAccessibilityDelivery
     private lateinit var visibilityController: BubbleVisibilityController
 
     private var bubbleView: AbstractComposeView? = null
@@ -240,6 +244,11 @@ class BubbleOverlayService : Service(),
         stateMachine = BubbleStateMachine()
         clipboardDelivery = BubbleClipboardDelivery(
             autoCopyEnabledProvider = { behaviorSettings.autoCopyEnabled.first() },
+        )
+        accessibilityDelivery = BubbleAccessibilityDelivery(
+            accessibilityEnabledProvider = {
+                WhisperBoardAccessibilityService.isEnabled(applicationContext)
+            },
         )
         visibilityController = BubbleVisibilityController(
             getSystemService(KEYGUARD_SERVICE) as KeyguardManager,
@@ -451,11 +460,13 @@ class BubbleOverlayService : Service(),
     // --- State machine wiring ---
 
     private fun handleEvent(event: BubbleEvent) {
-        // Pull the current auto-copy preference into the machine before
-        // each transition so the AutoCopy effect is gated correctly. The
-        // machine itself stays pure.
+        // Pull the current auto-copy + accessibility preferences into the
+        // machine before each transition so the AutoCopy / InsertInPlace
+        // effects are gated correctly. The machine itself stays pure.
         serviceScope.launch {
             stateMachine.autoCopyEnabled = behaviorSettings.autoCopyEnabled.first()
+            stateMachine.accessibilityEnabled =
+                WhisperBoardAccessibilityService.isEnabled(applicationContext)
             val transition = stateMachine.handle(event)
             applyTransition(transition)
         }
@@ -472,9 +483,54 @@ class BubbleOverlayService : Service(),
         when (effect) {
             BubbleEffect.StartRecording -> startTranscription()
             BubbleEffect.StopRecording -> stopTranscription()
-            is BubbleEffect.AutoCopy -> writeToClipboard(effect.text)
+            is BubbleEffect.AutoCopy -> {
+                writeToClipboard(effect.text)
+                // Track standalone-mode usage so the in-place insertion
+                // nudge can fire after enough successful uses. Empty
+                // transcripts never reach AutoCopy (the state machine
+                // skips them).
+                bubbleSettings.incrementStandaloneUseCount()
+            }
+            is BubbleEffect.InsertInPlace -> performInPlaceInsertion(effect.text)
             BubbleEffect.ShowCopiedToast -> showToast("Copied")
+            BubbleEffect.ShowInsertedToast -> showToast("Inserted")
             is BubbleEffect.ShowError -> showToast(effect.reason)
+        }
+    }
+
+    /**
+     * Try to write the polished transcript directly into the focused
+     * editable field via the accessibility service. Falls back to clipboard
+     * auto-copy when the writer reports no editable target or a refused
+     * action — accessibility is a *pure upgrade* (ADR-0001), it never
+     * supplants the standalone-mode safety net.
+     */
+    private suspend fun performInPlaceInsertion(text: String) {
+        val service = WhisperBoardAccessibilityService.instance
+        val writeResult = if (service != null) {
+            service.tryWrite(text)
+        } else {
+            // Settings says enabled but the binding isn't live yet — same
+            // fallback as "no editable target".
+            WriteResult.FellBackToClipboard(FallbackReason.NoEditableTarget)
+        }
+        when (val outcome = accessibilityDelivery.deliver(text, writeResult)) {
+            is DeliveryOutcome.Inserted -> {
+                showToast("Inserted")
+            }
+            is DeliveryOutcome.FellBack -> {
+                // Route through the standalone-mode delivery so the user's
+                // words land somewhere — clipboard plus the existing
+                // "Copied" affordance. The reason picks the toast wording.
+                writeToClipboard(text)
+                clipboardDelivery.deliver(text)
+                bubbleSettings.incrementStandaloneUseCount()
+                val message = when (outcome.reason) {
+                    FallbackReason.NoEditableTarget -> "No text field — copied instead"
+                    FallbackReason.ActionRefused -> "Field refused — copied instead"
+                }
+                showToast(message)
+            }
         }
     }
 

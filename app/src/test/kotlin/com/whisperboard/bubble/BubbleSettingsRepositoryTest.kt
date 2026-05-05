@@ -102,4 +102,38 @@ class BubbleSettingsRepositoryTest {
             stored.isUnset,
         )
     }
+
+    // --- Standalone-use counter (gates the in-place insertion nudge) ---
+
+    @Test
+    fun `default standaloneUseCount is zero`() = runTest {
+        assertEquals(0, repository.standaloneUseCount.first())
+    }
+
+    @Test
+    fun `incrementStandaloneUseCount accumulates across calls`() = runTest {
+        repository.incrementStandaloneUseCount()
+        repository.incrementStandaloneUseCount()
+        repository.incrementStandaloneUseCount()
+        assertEquals(3, repository.standaloneUseCount.first())
+    }
+
+    // --- Accessibility-nudge dismissal flag ---
+
+    @Test
+    fun `default accessibilityNudgeDismissed is false`() = runTest {
+        assertFalse(repository.accessibilityNudgeDismissed.first())
+    }
+
+    @Test
+    fun `setAccessibilityNudgeDismissed persists across reads`() = runTest {
+        repository.setAccessibilityNudgeDismissed(true)
+        assertTrue(repository.accessibilityNudgeDismissed.first())
+
+        // The flag is a dumb getter/setter — the brief's "never re-show
+        // after dismissal" rule lives in the consumer (the nudge gate),
+        // not in the repository.
+        repository.setAccessibilityNudgeDismissed(false)
+        assertFalse(repository.accessibilityNudgeDismissed.first())
+    }
 }

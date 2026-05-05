@@ -283,4 +283,104 @@ class BubbleStateMachineTest {
         val dismiss = machine.handle(BubbleEvent.Dismiss)
         assertEquals(BubbleState.Idle, dismiss.state)
     }
+
+    // --- Accessibility upgrade: InsertInPlace effect ---
+
+    /**
+     * Per ADR-0001, accessibility is a *pure upgrade*: when the user has
+     * granted the service the result transition should emit
+     * [BubbleEffect.InsertInPlace] in place of the standalone
+     * [BubbleEffect.AutoCopy] / [BubbleEffect.ShowCopiedToast]. The caller
+     * (the bubble overlay service) handles the actual writer call and the
+     * fallback path — the machine itself stays pure.
+     */
+    @Test
+    fun `transcript ready with accessibility enabled emits InsertInPlace and skips AutoCopy`() {
+        val machine = BubbleStateMachine().apply {
+            autoCopyEnabled = true
+            accessibilityEnabled = true
+        }
+        machine.handle(BubbleEvent.Tap)
+        machine.handle(BubbleEvent.Tap) // -> Processing
+
+        val transition = machine.handle(BubbleEvent.TranscriptReady("Polished words."))
+
+        assertEquals(BubbleState.Result("Polished words."), transition.state)
+        assertEquals(
+            listOf<BubbleEffect>(BubbleEffect.InsertInPlace("Polished words.")),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun `accessibility takes priority over autoCopy when both are enabled`() {
+        val machine = BubbleStateMachine().apply {
+            autoCopyEnabled = true
+            accessibilityEnabled = true
+        }
+        machine.handle(BubbleEvent.Tap)
+        machine.handle(BubbleEvent.Tap)
+
+        val transition = machine.handle(BubbleEvent.TranscriptReady("upgrade path"))
+
+        assertTrue(
+            "AutoCopy must not fire when accessibility is on — caller routes " +
+                "through the standalone-mode delivery only on writer fallback",
+            transition.effects.none { it is BubbleEffect.AutoCopy },
+        )
+        assertTrue(
+            "ShowCopiedToast must not fire when accessibility is on",
+            transition.effects.none { it == BubbleEffect.ShowCopiedToast },
+        )
+    }
+
+    @Test
+    fun `accessibility disabled keeps the existing autoCopy path intact`() {
+        val machine = BubbleStateMachine().apply {
+            autoCopyEnabled = true
+            accessibilityEnabled = false
+        }
+        machine.handle(BubbleEvent.Tap)
+        machine.handle(BubbleEvent.Tap)
+
+        val transition = machine.handle(BubbleEvent.TranscriptReady("standalone"))
+
+        assertEquals(
+            listOf<BubbleEffect>(
+                BubbleEffect.AutoCopy("standalone"),
+                BubbleEffect.ShowCopiedToast,
+            ),
+            transition.effects,
+        )
+    }
+
+    @Test
+    fun `blank transcript still goes idle silently with accessibility on`() {
+        val machine = BubbleStateMachine().apply { accessibilityEnabled = true }
+        machine.handle(BubbleEvent.Tap)
+        machine.handle(BubbleEvent.Tap)
+
+        val transition = machine.handle(BubbleEvent.TranscriptReady("   "))
+
+        assertEquals(BubbleState.Idle, transition.state)
+        assertTrue(transition.effects.isEmpty())
+    }
+
+    @Test
+    fun `accessibility disabled and autoCopy disabled emits no copy effects`() {
+        val machine = BubbleStateMachine().apply {
+            autoCopyEnabled = false
+            accessibilityEnabled = false
+        }
+        machine.handle(BubbleEvent.Tap)
+        machine.handle(BubbleEvent.Tap)
+
+        val transition = machine.handle(BubbleEvent.TranscriptReady("manual only"))
+
+        assertEquals(BubbleState.Result("manual only"), transition.state)
+        assertTrue(
+            "Both flags off must produce a Result state with no copy effects",
+            transition.effects.isEmpty(),
+        )
+    }
 }

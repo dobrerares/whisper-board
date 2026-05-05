@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Configuration for `WhisperBoardAccessibilityService`.
+
+    The service exists to write the bubble's polished transcript into the
+    focused editable field via `ACTION_SET_TEXT` / `ACTION_PASTE`. It does
+    *not* observe events to drive any feature in v1: focus discovery is
+    on-demand at write time via `findFocus(FOCUS_INPUT)`. We still declare a
+    minimal event subscription because the platform requires a non-empty
+    accessibilityEventTypes for the binding to be considered valid.
+
+    `flagDefault | flagRetrieveInteractiveWindows` — needed so
+    `findFocus(FOCUS_INPUT)` can traverse the active window tree.
+    `canRetrieveWindowContent` — required to read the focused editable node.
+    `canPerformGestures` is intentionally absent — the bubble does not
+    synthesise gestures.
+
+    Per ADR-0001 this is a *pure upgrade* permission — the bubble works in
+    standalone mode without it.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewFocused|typeWindowStateChanged|typeViewTextSelectionChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagDefault|flagRetrieveInteractiveWindows"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/accessibility_service_description"
+    android:notificationTimeout="100"
+    android:summary="@string/accessibility_service_summary" />

@@ -92,8 +92,29 @@ sealed interface BubbleEffect {
     /** Auto-copy the polished transcript to the system clipboard. */
     data class AutoCopy(val text: String) : BubbleEffect
 
+    /**
+     * Attempt to insert the polished transcript directly into the focused
+     * editable field via the accessibility service. Emitted instead of
+     * [AutoCopy] when [BubbleStateMachine.accessibilityEnabled] is true.
+     *
+     * The caller is responsible for executing the insertion and handling
+     * the [com.whisperboard.accessibility.WriteResult] — when the writer
+     * falls back to clipboard auto-copy the caller routes through the
+     * standalone-mode delivery so the user's words are never lost. Per
+     * ADR-0001 accessibility is a *pure upgrade*; the fallback path is
+     * always available.
+     */
+    data class InsertInPlace(val text: String) : BubbleEffect
+
     /** Show a transient "Copied" toast. */
     data object ShowCopiedToast : BubbleEffect
+
+    /**
+     * Show a transient "Inserted" confirmation pip. Distinct from
+     * [ShowCopiedToast] so the bubble's result UI can render different
+     * affordances for in-place insertion vs standalone auto-copy.
+     */
+    data object ShowInsertedToast : BubbleEffect
 
     /** Surface a transient error to the user. */
     data class ShowError(val reason: String) : BubbleEffect
@@ -124,6 +145,23 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
      * construction time so the machine remains pure.
      */
     var autoCopyEnabled: Boolean = true
+
+    /**
+     * Behaviour controlling whether the bubble attempts in-place insertion
+     * (via the accessibility service) when a transcript becomes available.
+     * Defaults to `false` — accessibility is a *pure upgrade* per ADR-0001
+     * and is granted post-install. The caller flips this to `true` once
+     * `WhisperBoardAccessibilityService.isEnabled(...)` reports the user has
+     * granted the permission.
+     *
+     * When `true`, the result transition emits [BubbleEffect.InsertInPlace]
+     * instead of [BubbleEffect.AutoCopy] / [BubbleEffect.ShowCopiedToast].
+     * The caller's response to InsertInPlace owns the fallback path: if the
+     * accessibility writer can't find an editable target, the caller routes
+     * the same transcript through the standalone-mode auto-copy delivery so
+     * the user's words are never lost.
+     */
+    var accessibilityEnabled: Boolean = false
 
     private var currentState: BubbleState = initial
     val state: BubbleState get() = currentState
@@ -241,7 +279,14 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
             return BubbleTransition(BubbleState.Idle)
         }
         val effects = mutableListOf<BubbleEffect>()
-        if (autoCopyEnabled) {
+        // Accessibility is the upgrade path: when it is granted, attempt
+        // in-place insertion instead of clipboard auto-copy. The caller is
+        // responsible for routing back through clipboard delivery if the
+        // accessibility writer falls back (no editable target / action
+        // refused) — see BubbleAccessibilityDelivery.
+        if (accessibilityEnabled) {
+            effects += BubbleEffect.InsertInPlace(text)
+        } else if (autoCopyEnabled) {
             effects += BubbleEffect.AutoCopy(text)
             effects += BubbleEffect.ShowCopiedToast
         }
