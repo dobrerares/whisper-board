@@ -45,7 +45,7 @@ A persistent **8 dp blue sliver** at the right edge (default). Vertical position
 
 The 200 ms long-press threshold (existing constant in `BubbleView`) disambiguates tap from long-press. The drag-perpendicular dismiss is gated on the gesture's start position being within the sliver's touch zone — drags that start anywhere else are ignored.
 
-Drags during Recording / Polishing / ResultReady are **dropped** rather than canceling the action. The user can't accidentally lose a transcript by mis-gesturing during a dictation.
+Drags during Recording / Processing / ResultReady are **dropped** rather than canceling the action. The user can't accidentally lose a transcript by mis-gesturing during a dictation.
 
 ### Summoned sheet
 
@@ -64,7 +64,7 @@ The sheet auto-closes after 4 s of inactivity, or on outside-tap. While the shee
 |---|---|
 | Idle | Quiet blue tint (current MaterialTheme primary at ~60 % alpha) |
 | Recording | Solid red, slight pulse (sliver length pulses ±10 % at 800 ms cadence — same animation primitive as today's `BubbleAmplitudePulse`) |
-| Polishing | Solid amber, no pulse |
+| Processing | Solid amber, no pulse |
 | Result-ready | Solid green for 3 s, then fades back to idle blue |
 | Dismissed (cooldown active) | Sliver hidden entirely; nothing on screen |
 
@@ -99,7 +99,7 @@ Drag-tear sets `dismissedAt = now()`. The bubble is hidden until `now() - dismis
 **Modified:**
 
 - `bubble/BubbleView.kt` — slimmed dramatically. Becomes a top-level orchestrator that decides whether to render `EdgeSliver`, `SummonedSheet`, or both. Loses `IdleBubble`, `ResultBubble`, `BubbleAmplitudePulse`.
-- `bubble/BubbleStateMachine.kt` — keeps `Idle / Recording / Polishing / Result` states, **adds** `Dismissed(cooldownEndsAt: Long)` and `Peeked` states. Adds events: `BubbleEvent.Peek`, `BubbleEvent.PeekTimeout`, `BubbleEvent.DragTearComplete`, `BubbleEvent.CooldownElapsed`. The drag-tear-during-action rule is enforced by the transition table (Recording / Polishing / Result transitions on `DragTearComplete` are no-ops).
+- `bubble/BubbleStateMachine.kt` — keeps `Idle / Recording / Processing / Result` states, **adds** `Dismissed(cooldownEndsAt: Long)` and `Peeked` states. Adds events: `BubbleEvent.Peek`, `BubbleEvent.PeekTimeout`, `BubbleEvent.DragTearComplete`, `BubbleEvent.CooldownElapsed`. The drag-tear-during-action rule is enforced by the transition table (Recording / Processing / Result transitions on `DragTearComplete` are no-ops).
 - `bubble/BubbleVisibilityRules.kt` — adds `cooldownActive: Boolean` to `BubbleVisibilityInputs`; rule order becomes:
   1. `mode == Disabled` → hidden
   2. `cooldownActive` → hidden
@@ -136,15 +136,15 @@ Idle ──DragTearComplete──> Dismissed(now + cooldownMs)
 Peeked ──PeekTimeout──> Idle
 Peeked ──Tap (outside)──> Idle
 Peeked ──LongPressStart──> Recording
-Recording ──LongPressEnd──> Polishing
-Polishing ──PolishComplete(text)──> Result(text)
+Recording ──LongPressEnd──> Processing
+Processing ──TranscriptReady(text)──> Result(text)
 Result ──ResultDecayElapsed (3 s)──> Idle
 Result ──Tap──> Peeked  (re-shows the sheet with the result inline)
 Dismissed(t) ──CooldownElapsed (now ≥ t)──> Idle
 * ──Disable──> Disabled
 ```
 
-Recording / Polishing / Result drop `DragTearComplete` (no transition).
+Recording / Processing / Result drop `DragTearComplete` (no transition).
 
 ### Data flow
 
@@ -259,8 +259,8 @@ The existing visibility-mode radio's `onSelect` callback that calls `onStartBubb
   - Existing IME-up anti-regression test stays.
 - `BubbleStateMachineTest` (extended):
   - `Idle + DragTearComplete` → `Dismissed`.
-  - `Recording + DragTearComplete` → `Recording` (no transition).
-  - `Polishing + DragTearComplete` → `Polishing`.
+  - `Recording + DragTearComplete` → `Recording` (no transition; emits no effect).
+  - `Processing + DragTearComplete` → `Processing` (no transition).
   - `Result + DragTearComplete` → `Result`.
   - `Dismissed + CooldownElapsed` → `Idle`.
   - `Peeked + PeekTimeout` → `Idle`.
