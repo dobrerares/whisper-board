@@ -40,6 +40,16 @@ sealed interface BubbleState {
      * and for transitioning back to [Idle] after the dismiss timer elapses.
      */
     data class Result(val text: String) : BubbleState
+
+    /** The bubble is dismissed; sliver hidden until [cooldownEndsAt]. */
+    data class Dismissed(val cooldownEndsAt: Long) : BubbleState
+
+    /**
+     * The user tapped the sliver. Sheet is shown with mic + last result.
+     * Auto-collapses to Idle after PeekTimeout (4 s of inactivity in the
+     * sheet) or on outside tap.
+     */
+    data object Peeked : BubbleState
 }
 
 /**
@@ -71,6 +81,21 @@ sealed interface BubbleEvent {
      * [Effect.ShowError].
      */
     data class Error(val reason: String) : BubbleEvent
+
+    /**
+     * User completed a drag-tear gesture. Records dismissedAt = now and
+     * computes the cooldown end.
+     */
+    data class DragTearComplete(val now: Long, val cooldownMs: Long) : BubbleEvent
+
+    /** Cooldown clock fired and reached `cooldownEndsAt`. */
+    data object CooldownElapsed : BubbleEvent
+
+    /** User tapped the sliver to open the sheet (peek). */
+    data object Peek : BubbleEvent
+
+    /** The 4-second inactivity timer elapsed while in Peeked. */
+    data object PeekTimeout : BubbleEvent
 }
 
 /**
@@ -182,6 +207,8 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
             is BubbleState.Recording -> handleRecording(state, event)
             BubbleState.Processing -> handleProcessing(event)
             is BubbleState.Result -> handleResult(state, event)
+            BubbleState.Peeked -> handlePeeked(event)
+            is BubbleState.Dismissed -> handleDismissed(state, event)
         }
 
     private fun handleIdle(event: BubbleEvent): BubbleTransition =
@@ -194,10 +221,16 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
                 state = BubbleState.Recording(pushToTalk = true),
                 effects = listOf(BubbleEffect.StartRecording),
             )
+            BubbleEvent.Peek -> BubbleTransition(BubbleState.Peeked)
+            is BubbleEvent.DragTearComplete -> BubbleTransition(
+                BubbleState.Dismissed(cooldownEndsAt = event.now + event.cooldownMs),
+            )
             BubbleEvent.Dismiss,
             BubbleEvent.LongPressEnd -> BubbleTransition(BubbleState.Idle)
             is BubbleEvent.TranscriptReady,
             is BubbleEvent.Error -> BubbleTransition(BubbleState.Idle)
+            BubbleEvent.CooldownElapsed,
+            BubbleEvent.PeekTimeout -> BubbleTransition(BubbleState.Idle)
         }
 
     private fun handleRecording(
@@ -231,6 +264,12 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
             )
             BubbleEvent.Dismiss -> BubbleTransition(BubbleState.Idle)
             is BubbleEvent.TranscriptReady -> resultTransition(event.text)
+            // Edge-sliver gestures are ignored while a recording is in flight —
+            // the user must finish (release / tap-stop) or hit Dismiss first.
+            is BubbleEvent.DragTearComplete,
+            BubbleEvent.CooldownElapsed,
+            BubbleEvent.Peek,
+            BubbleEvent.PeekTimeout -> BubbleTransition(state)
         }
 
     private fun handleProcessing(event: BubbleEvent): BubbleTransition =
@@ -245,7 +284,11 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
             // bubble UI shows a spinner and is non-interactive.
             BubbleEvent.Tap,
             BubbleEvent.LongPressStart,
-            BubbleEvent.LongPressEnd -> BubbleTransition(BubbleState.Processing)
+            BubbleEvent.LongPressEnd,
+            is BubbleEvent.DragTearComplete,
+            BubbleEvent.CooldownElapsed,
+            BubbleEvent.Peek,
+            BubbleEvent.PeekTimeout -> BubbleTransition(BubbleState.Processing)
         }
 
     private fun handleResult(
@@ -271,6 +314,61 @@ class BubbleStateMachine(initial: BubbleState = BubbleState.Idle) {
                 state = BubbleState.Idle,
                 effects = listOf(BubbleEffect.ShowError(event.reason)),
             )
+            // Edge-sliver gestures don't apply while the result chip is up.
+            is BubbleEvent.DragTearComplete,
+            BubbleEvent.CooldownElapsed,
+            BubbleEvent.Peek,
+            BubbleEvent.PeekTimeout -> BubbleTransition(state)
+        }
+
+    /**
+     * Sliver-tap "peek" sheet. The user can long-press the mic to start a
+     * fresh PTT recording, tap again to close, or wait for the inactivity
+     * timer to fire [BubbleEvent.PeekTimeout].
+     */
+    private fun handlePeeked(event: BubbleEvent): BubbleTransition =
+        when (event) {
+            BubbleEvent.PeekTimeout -> BubbleTransition(BubbleState.Idle)
+            // Re-tap on the sliver while peeked closes the sheet.
+            BubbleEvent.Tap -> BubbleTransition(BubbleState.Idle)
+            // Long-press on the peek sheet's mic enters PTT recording — same
+            // as the "start a fresh recording from result" shortcut.
+            BubbleEvent.LongPressStart -> BubbleTransition(
+                state = BubbleState.Recording(pushToTalk = true),
+                effects = listOf(BubbleEffect.StartRecording),
+            )
+            // No transition for any other event — peek is an ephemeral overlay
+            // and async events (transcripts, errors) shouldn't apply here.
+            BubbleEvent.LongPressEnd,
+            BubbleEvent.Dismiss,
+            BubbleEvent.Peek,
+            BubbleEvent.CooldownElapsed,
+            is BubbleEvent.DragTearComplete,
+            is BubbleEvent.TranscriptReady,
+            is BubbleEvent.Error -> BubbleTransition(BubbleState.Peeked)
+        }
+
+    /**
+     * The bubble is dismissed for a cooldown window. The only meaningful
+     * event is [BubbleEvent.CooldownElapsed], which restores the sliver to
+     * [BubbleState.Idle]. Re-issuing [BubbleEvent.DragTearComplete] while
+     * already dismissed is a no-op — there's no point dismissing twice.
+     */
+    private fun handleDismissed(
+        state: BubbleState.Dismissed,
+        event: BubbleEvent,
+    ): BubbleTransition =
+        when (event) {
+            BubbleEvent.CooldownElapsed -> BubbleTransition(BubbleState.Idle)
+            BubbleEvent.Tap,
+            BubbleEvent.LongPressStart,
+            BubbleEvent.LongPressEnd,
+            BubbleEvent.Dismiss,
+            BubbleEvent.Peek,
+            BubbleEvent.PeekTimeout,
+            is BubbleEvent.DragTearComplete,
+            is BubbleEvent.TranscriptReady,
+            is BubbleEvent.Error -> BubbleTransition(state)
         }
 
     private fun resultTransition(text: String): BubbleTransition {

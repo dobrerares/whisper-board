@@ -383,4 +383,67 @@ class BubbleStateMachineTest {
             transition.effects.isEmpty(),
         )
     }
+
+    // --- Edge-sliver redesign: Dismissed and Peeked states ---
+
+    @Test
+    fun `idle plus DragTearComplete transitions to Dismissed`() {
+        val machine = BubbleStateMachine()
+        val transition = machine.handle(
+            BubbleEvent.DragTearComplete(now = 1_000L, cooldownMs = 5_000L)
+        )
+        val state = transition.state
+        assertTrue("expected Dismissed, was $state", state is BubbleState.Dismissed)
+        assertEquals(6_000L, (state as BubbleState.Dismissed).cooldownEndsAt)
+    }
+
+    @Test
+    fun `recording ignores DragTearComplete`() {
+        val machine = BubbleStateMachine()
+        machine.handle(BubbleEvent.LongPressStart)
+        val before = machine.state
+        machine.handle(BubbleEvent.DragTearComplete(now = 1_000L, cooldownMs = 5_000L))
+        assertEquals(before, machine.state)
+    }
+
+    @Test
+    fun `processing ignores DragTearComplete`() {
+        val machine = BubbleStateMachine()
+        machine.handle(BubbleEvent.LongPressStart)
+        machine.handle(BubbleEvent.LongPressEnd)
+        val before = machine.state
+        machine.handle(BubbleEvent.DragTearComplete(now = 1_000L, cooldownMs = 5_000L))
+        assertEquals(before, machine.state)
+    }
+
+    @Test
+    fun `dismissed plus CooldownElapsed transitions to Idle`() {
+        val machine = BubbleStateMachine()
+        machine.handle(BubbleEvent.DragTearComplete(now = 1_000L, cooldownMs = 5_000L))
+        val transition = machine.handle(BubbleEvent.CooldownElapsed)
+        assertTrue(transition.state is BubbleState.Idle)
+    }
+
+    @Test
+    fun `idle plus Peek transitions to Peeked`() {
+        val machine = BubbleStateMachine()
+        val transition = machine.handle(BubbleEvent.Peek)
+        assertTrue(transition.state is BubbleState.Peeked)
+    }
+
+    @Test
+    fun `peeked plus PeekTimeout transitions to Idle`() {
+        val machine = BubbleStateMachine()
+        machine.handle(BubbleEvent.Peek)
+        val transition = machine.handle(BubbleEvent.PeekTimeout)
+        assertTrue(transition.state is BubbleState.Idle)
+    }
+
+    @Test
+    fun `peeked plus LongPressStart transitions to Recording`() {
+        val machine = BubbleStateMachine()
+        machine.handle(BubbleEvent.Peek)
+        val transition = machine.handle(BubbleEvent.LongPressStart)
+        assertTrue(transition.state is BubbleState.Recording)
+    }
 }

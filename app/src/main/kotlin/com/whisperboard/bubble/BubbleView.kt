@@ -148,6 +148,12 @@ fun BubbleView(
             onDragEnd = onDragEnd,
             modifier = modifier,
         )
+        // Edge-sliver redesign — these states currently render nothing here;
+        // the sliver and peek-sheet UI live in their own overlay windows
+        // attached by [BubbleOverlayService]. The state machine still owns
+        // the transitions so we keep the branches exhaustive.
+        is BubbleState.Dismissed,
+        BubbleState.Peeked -> Unit
     }
 }
 
