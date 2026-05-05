@@ -32,6 +32,12 @@ sealed class EditAction {
 class KeyboardViewModel(
     private val audioPipeline: AudioPipeline,
     private val languageRepository: LanguageRepository,
+    /**
+     * Returns whether auto-insert is currently enabled. Default returns `true`
+     * so existing call sites (and tests) keep working until the IME wires the
+     * real `BehaviorSettingsRepository` flow through.
+     */
+    autoInsertEnabledProvider: suspend () -> Boolean = { true },
 ) : ViewModel() {
 
     companion object {
@@ -50,8 +56,23 @@ class KeyboardViewModel(
     private val _isRecording = MutableStateFlow(false)
     val isRecording: StateFlow<Boolean> = _isRecording.asStateFlow()
 
-    private val _transcribedText = MutableStateFlow("")
-    val transcribedText: StateFlow<String> = _transcribedText.asStateFlow()
+    /**
+     * Decides where each finished transcript goes — focused field (auto-insert)
+     * or staged preview (auto-insert off). Pulled out so the decision is
+     * unit-testable without faking [AudioPipeline] / [LanguageRepository].
+     */
+    private val delivery = TranscriptDelivery(autoInsertEnabledProvider)
+
+    val transcribedText: StateFlow<String> = delivery.transcribedText
+
+    /**
+     * One-shot events asking the IME to write text into the focused field via
+     * `InputConnection.commitText`. Emitted when **auto-insert** is on and a
+     * transcript is ready. The screen layer subscribes and applies the commit;
+     * the view-model stays free of Android `InputConnection` references in the
+     * auto-insert path.
+     */
+    val autoInsertRequests: SharedFlow<String> = delivery.autoInsertRequests
 
     /**
      * When true, the most recent transcript came back as raw text because the
@@ -126,7 +147,7 @@ class KeyboardViewModel(
                 Log.d(TAG, "Transcription done in ${elapsed}ms: \"$rawTranscript\"")
 
                 val finalText = polishIfEnabled(rawTranscript)
-                _transcribedText.value = finalText
+                delivery.deliver(finalText)
             } catch (e: Exception) {
                 Log.e(TAG, "Transcription failed", e)
                 _errorMessage.tryEmit(e.message ?: "Transcription failed")
@@ -144,11 +165,17 @@ class KeyboardViewModel(
         }
     }
 
+    /**
+     * Commit the staged transcript into the focused field. Used by the
+     * preview-then-commit path (auto-insert OFF) and as the user-tap fallback
+     * if an auto-insert event was missed. No-op when the staged transcript is
+     * empty.
+     */
     fun commitText(inputConnection: InputConnection?) {
-        val text = _transcribedText.value
+        val text = delivery.transcribedText.value
         if (text.isNotEmpty() && inputConnection != null) {
             inputConnection.commitText(text, 1)
-            _transcribedText.value = ""
+            delivery.clearStaged()
             _polishUnavailable.value = false
         }
     }

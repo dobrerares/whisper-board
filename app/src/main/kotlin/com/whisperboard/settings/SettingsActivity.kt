@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
+import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.postprocessing.PostProcessingSettingsRepository
@@ -53,6 +54,7 @@ class SettingsActivity : ComponentActivity() {
         val languageRepository = LanguageRepository(applicationContext)
         val apiSettingsRepository = ApiSettingsRepository(applicationContext)
         val postProcessingSettingsRepository = PostProcessingSettingsRepository(applicationContext)
+        val behaviorSettingsRepository = BehaviorSettingsRepository(applicationContext)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -69,6 +71,7 @@ class SettingsActivity : ComponentActivity() {
                     languageRepository = languageRepository,
                     apiSettingsRepository = apiSettingsRepository,
                     postProcessingSettingsRepository = postProcessingSettingsRepository,
+                    behaviorSettingsRepository = behaviorSettingsRepository,
                     imeEnabled = imeEnabled.value,
                     imeSelected = imeSelected.value,
                     onOpenImeSettings = {

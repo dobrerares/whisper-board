@@ -20,6 +20,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.whisperboard.audio.AudioPipeline
+import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.LanguageRepository
 import com.whisperboard.model.ModelRepository
 import com.whisperboard.postprocessing.ApiPostProcessor
@@ -67,6 +68,7 @@ class WhisperBoardIME : InputMethodService(),
     private lateinit var modelRepository: ModelRepository
     private lateinit var apiSettingsRepository: ApiSettingsRepository
     private lateinit var postProcessingSettings: PostProcessingSettingsRepository
+    private lateinit var behaviorSettings: BehaviorSettingsRepository
     private lateinit var engineRouter: EngineRouter
     private lateinit var postProcessingRouter: PostProcessingRouter
     private lateinit var viewModel: KeyboardViewModel
@@ -86,6 +88,7 @@ class WhisperBoardIME : InputMethodService(),
         modelRepository = ModelRepository(applicationContext)
         apiSettingsRepository = ApiSettingsRepository(applicationContext)
         postProcessingSettings = PostProcessingSettingsRepository(applicationContext)
+        behaviorSettings = BehaviorSettingsRepository(applicationContext)
 
         val connectivityManager =
             getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
@@ -95,7 +98,11 @@ class WhisperBoardIME : InputMethodService(),
             strategyProvider = { postProcessingSettings.strategy.first() },
         )
 
-        viewModel = KeyboardViewModel(audioPipeline, languageRepository)
+        viewModel = KeyboardViewModel(
+            audioPipeline = audioPipeline,
+            languageRepository = languageRepository,
+            autoInsertEnabledProvider = { behaviorSettings.autoInsertEnabled.first() },
+        )
         viewModel.setEngineRouter(engineRouter)
         viewModel.setPostProcessingRouter(postProcessingRouter)
 
