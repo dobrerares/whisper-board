@@ -133,4 +133,48 @@ class TranscriptDeliveryTest {
                 delivery.transcribedText.value.isEmpty(),
             )
         }
+
+    @Test
+    fun `target app name is captured at delivery time`() =
+        runTest(UnconfinedTestDispatcher()) {
+            // The provider returns the "current" focused-field package
+            // name. Per the slice 6b brief, the persistence layer reads
+            // the snapshot taken at delivery time so a focus change
+            // after delivery doesn't relabel the entry.
+            var currentApp: String? = "com.example.notes"
+            val delivery = TranscriptDelivery(
+                autoInsertEnabledProvider = { true },
+                targetAppNameProvider = { currentApp },
+            )
+
+            val received = async { delivery.autoInsertRequests.first() }
+            delivery.deliver("first")
+            received.await()
+            assertEquals("com.example.notes", delivery.lastTargetAppName())
+
+            // Focus moves before persistence reads the snapshot — but
+            // persistence reads `lastTargetAppName()`, which captured the
+            // earlier value. The next deliver call will refresh it.
+            currentApp = "com.example.calendar"
+            assertEquals(
+                "Snapshot must persist between deliveries",
+                "com.example.notes",
+                delivery.lastTargetAppName(),
+            )
+
+            val secondReceived = async { delivery.autoInsertRequests.first() }
+            delivery.deliver("second")
+            secondReceived.await()
+            assertEquals("com.example.calendar", delivery.lastTargetAppName())
+        }
+
+    @Test
+    fun `target app name is null when no provider is wired`() =
+        runTest(UnconfinedTestDispatcher()) {
+            val delivery = TranscriptDelivery(autoInsertEnabledProvider = { true })
+            val received = async { delivery.autoInsertRequests.first() }
+            delivery.deliver("x")
+            received.await()
+            assertNull(delivery.lastTargetAppName())
+        }
 }
