@@ -3,6 +3,7 @@ package com.whisperboard.bubble
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -13,12 +14,15 @@ import kotlinx.coroutines.flow.map
 /**
  * DataStore-backed settings for the bubble surface.
  *
- * Two persisted shapes:
+ * Persisted shapes:
  * - **Visibility mode** — [BubbleVisibilityMode] enum with default
  *   [BubbleVisibilityMode.AlwaysVisible] per the brief.
  * - **Position** — `x`/`y` integers for the last-known overlay coordinates
  *   so the bubble re-appears where the user last left it. Persisted in the
  *   same DataStore so we don't multiply DataStore singletons.
+ * - **Standalone use count** — increments on each completed standalone-mode
+ *   utterance; gates the first-time accessibility nudge.
+ * - **Accessibility nudge dismissed** — once set, the nudge never re-shows.
  *
  * The repository takes the [DataStore] directly so unit tests can drop in an
  * in-memory store; production code uses the [Context]-based secondary
@@ -34,11 +38,21 @@ class BubbleSettingsRepository(
         private val KEY_VISIBILITY = stringPreferencesKey("bubble_visibility_mode")
         private val KEY_X = intPreferencesKey("bubble_x")
         private val KEY_Y = intPreferencesKey("bubble_y")
+        private val KEY_STANDALONE_USE_COUNT = intPreferencesKey("bubble_standalone_use_count")
+        private val KEY_NUDGE_DISMISSED = booleanPreferencesKey("bubble_accessibility_nudge_dismissed")
 
         val DEFAULT_VISIBILITY = BubbleVisibilityMode.AlwaysVisible
 
         /** Sentinel meaning "no position saved yet". */
         const val UNSET_COORDINATE: Int = Int.MIN_VALUE
+
+        /**
+         * Number of standalone-mode dictations the user must complete before
+         * the in-place insertion nudge appears. Per the Agent Brief: nudge
+         * "after they've already seen value before the permission ask",
+         * suggested N = 3.
+         */
+        const val ACCESSIBILITY_NUDGE_THRESHOLD: Int = 3
     }
 
     val visibilityMode: Flow<BubbleVisibilityMode> = dataStore.data.map { prefs ->
@@ -70,6 +84,57 @@ class BubbleSettingsRepository(
             prefs[KEY_Y] = y
         }
     }
+
+    /**
+     * Total number of completed standalone-mode utterances on this device.
+     * Caps at [Int.MAX_VALUE]; counted only for utterances that produced
+     * non-blank text so we don't reward false starts.
+     */
+    val standaloneUseCount: Flow<Int> = dataStore.data.map { prefs ->
+        prefs[KEY_STANDALONE_USE_COUNT] ?: 0
+    }
+
+    suspend fun incrementStandaloneUseCount() {
+        dataStore.edit { prefs ->
+            val current = prefs[KEY_STANDALONE_USE_COUNT] ?: 0
+            // Saturating increment — no real user will hit Int.MAX_VALUE
+            // dictations, but the gate logic must not behave erratically if
+            // they do.
+            prefs[KEY_STANDALONE_USE_COUNT] = if (current == Int.MAX_VALUE) current else current + 1
+        }
+    }
+
+    /**
+     * Whether the user has dismissed the accessibility upgrade nudge. Once
+     * `true`, the nudge never re-shows — the brief explicitly forbids
+     * re-prompting after dismissal.
+     */
+    val accessibilityNudgeDismissed: Flow<Boolean> = dataStore.data.map { prefs ->
+        prefs[KEY_NUDGE_DISMISSED] ?: false
+    }
+
+    suspend fun setAccessibilityNudgeDismissed(dismissed: Boolean) {
+        dataStore.edit { it[KEY_NUDGE_DISMISSED] = dismissed }
+    }
+}
+
+/**
+ * Pure decision: should the in-place insertion nudge be shown right now?
+ *
+ * The brief: nudge after N standalone-mode uses, never after dismissal,
+ * never when accessibility is already enabled. Splitting this out as a
+ * top-level function keeps the rule JVM-testable without spinning up the
+ * DataStore.
+ */
+fun shouldShowAccessibilityNudge(
+    standaloneUseCount: Int,
+    accessibilityNudgeDismissed: Boolean,
+    accessibilityEnabled: Boolean,
+    threshold: Int = BubbleSettingsRepository.ACCESSIBILITY_NUDGE_THRESHOLD,
+): Boolean {
+    if (accessibilityEnabled) return false
+    if (accessibilityNudgeDismissed) return false
+    return standaloneUseCount >= threshold
 }
 
 /**
