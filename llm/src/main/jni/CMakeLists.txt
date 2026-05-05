@@ -23,19 +23,31 @@ set(LLAMA_BUILD_COMMON   OFF CACHE BOOL "" FORCE)
 set(LLAMA_CURL           OFF CACHE BOOL "" FORCE)
 set(GGML_BACKEND_DL      OFF CACHE BOOL "" FORCE)
 
-# Per-ABI tuning. KleidiAI + OpenMP are arm64-v8a-only; armeabi-v7a builds
-# need them off. x86_64 also stays vanilla. Mirrors the upstream
-# examples/llama.android shape but extended to cover armeabi-v7a so this
-# module ships across all three ABIs declared in build.gradle.kts.
+# Per-ABI tuning.
+#
+# KleidiAI is intentionally OFF across the board — its CMake fetches the
+# upstream archive at configure time, which races with Ninja on Windows
+# ("manifest 'build.ninja' still dirty after 100 tries") and breaks the AGP
+# CMake invocation. Disabling it gives up some int8 GEMM performance on
+# arm64-v8a but keeps the module buildable on the project's primary
+# developer host. ggml's standard dotprod / fp16 paths still apply.
+#
+# OpenMP is OFF because Android NDK 26 ships clang's libomp that requires
+# linking a runtime not present on stock Android — leaving it off makes
+# the binary load reliably across the abi spread we ship.
 if(ANDROID_ABI STREQUAL "arm64-v8a")
-    set(GGML_CPU_KLEIDIAI ON CACHE BOOL "" FORCE)
-    set(GGML_OPENMP       ON CACHE BOOL "" FORCE)
+    set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
+    set(GGML_OPENMP       OFF CACHE BOOL "" FORCE)
     # Match :whisper's tuning — ARMv8.2+ for fast quantized inference on
     # mainstream hardware (~2017 onwards).
     set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod+fp16" CACHE STRING "" FORCE)
 elseif(ANDROID_ABI STREQUAL "armeabi-v7a")
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
     set(GGML_OPENMP       OFF CACHE BOOL "" FORCE)
+    # llamafile's sgemm fast path uses fp16 NEON intrinsics that require
+    # ARMv8 — armv7-a-mthumb cannot compile them. The default scalar path
+    # is still functional, just slower.
+    set(GGML_LLAMAFILE    OFF CACHE BOOL "" FORCE)
 elseif(ANDROID_ABI STREQUAL "x86_64")
     set(GGML_CPU_KLEIDIAI OFF CACHE BOOL "" FORCE)
     set(GGML_OPENMP       OFF CACHE BOOL "" FORCE)

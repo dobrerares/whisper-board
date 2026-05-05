@@ -64,6 +64,23 @@ android {
             isReturnDefaultValues = true
         }
     }
+
+    // Both :whisper and :llm produce a copy of libggml*.so because each
+    // module builds ggml as part of its own CMake graph. The `.so`s are
+    // ABI-compatible (both come from the same ggml inside whisper.cpp /
+    // llama.cpp), so packaging picks the first one it sees rather than
+    // failing the merge. The two JNI shims both load via System.loadLibrary
+    // and depend transitively on the same ggml ABI surface — `pickFirst`
+    // is the appropriate disposition.
+    packaging {
+        jniLibs {
+            pickFirsts += listOf(
+                "lib/*/libggml.so",
+                "lib/*/libggml-base.so",
+                "lib/*/libggml-cpu.so",
+            )
+        }
+    }
 }
 
 dependencies {
