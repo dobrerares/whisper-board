@@ -42,6 +42,19 @@ fun KeyboardScreen(
             }
         }
 
+        // Auto-insert path: when the view-model emits a finished transcript
+        // and auto-insert is on, write it directly into the focused field via
+        // `InputConnection.commitText`. This is the slice 6a default. When
+        // auto-insert is off the view-model stages the transcript in
+        // `transcribedText` instead, and the user taps `TranscriptionArea` to
+        // commit. (Slice 6b/issue #8 will replace the staged-transcript area
+        // with a dictation-history scroll.)
+        LaunchedEffect(Unit) {
+            viewModel.autoInsertRequests.collect { text ->
+                inputConnection()?.commitText(text, 1)
+            }
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
