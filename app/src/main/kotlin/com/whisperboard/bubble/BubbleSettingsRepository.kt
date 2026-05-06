@@ -40,6 +40,9 @@ class BubbleSettingsRepository(
         private val KEY_Y = intPreferencesKey("bubble_y")
         private val KEY_STANDALONE_USE_COUNT = intPreferencesKey("bubble_standalone_use_count")
         private val KEY_NUDGE_DISMISSED = booleanPreferencesKey("bubble_accessibility_nudge_dismissed")
+        private val KEY_EDGE = stringPreferencesKey("bubble_edge")
+        private val KEY_COOLDOWN_MS = androidx.datastore.preferences.core.longPreferencesKey("bubble_cooldown_ms")
+        private val KEY_DISMISSED_AT = androidx.datastore.preferences.core.longPreferencesKey("bubble_dismissed_at")
 
         val DEFAULT_VISIBILITY = BubbleVisibilityMode.AlwaysVisible
 
@@ -53,6 +56,11 @@ class BubbleSettingsRepository(
          * suggested N = 3.
          */
         const val ACCESSIBILITY_NUDGE_THRESHOLD: Int = 3
+
+        val DEFAULT_EDGE: Edge = Edge.RIGHT
+
+        /** Default cooldown after dismiss: 5 minutes. */
+        const val DEFAULT_COOLDOWN_MS: Long = 5L * 60_000L
     }
 
     val visibilityMode: Flow<BubbleVisibilityMode> = dataStore.data.map { prefs ->
@@ -115,6 +123,36 @@ class BubbleSettingsRepository(
 
     suspend fun setAccessibilityNudgeDismissed(dismissed: Boolean) {
         dataStore.edit { it[KEY_NUDGE_DISMISSED] = dismissed }
+    }
+
+    val edge: Flow<Edge> = dataStore.data.map { prefs ->
+        prefs[KEY_EDGE]?.let { stored ->
+            runCatching { Edge.valueOf(stored) }.getOrNull()
+        } ?: DEFAULT_EDGE
+    }
+
+    suspend fun setEdge(edge: Edge) {
+        dataStore.edit { it[KEY_EDGE] = edge.name }
+    }
+
+    val cooldownMs: Flow<Long> = dataStore.data.map { prefs ->
+        prefs[KEY_COOLDOWN_MS] ?: DEFAULT_COOLDOWN_MS
+    }
+
+    suspend fun setCooldownMs(ms: Long) {
+        dataStore.edit { it[KEY_COOLDOWN_MS] = ms }
+    }
+
+    val dismissedAt: Flow<Long?> = dataStore.data.map { prefs ->
+        prefs[KEY_DISMISSED_AT]
+    }
+
+    suspend fun setDismissedAt(now: Long) {
+        dataStore.edit { it[KEY_DISMISSED_AT] = now }
+    }
+
+    suspend fun clearDismissedAt() {
+        dataStore.edit { it.remove(KEY_DISMISSED_AT) }
     }
 }
 

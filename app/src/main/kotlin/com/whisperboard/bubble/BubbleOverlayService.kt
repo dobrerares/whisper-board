@@ -16,12 +16,18 @@ import android.os.IBinder
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
+import android.view.View
 import android.view.WindowManager
 import android.widget.Toast
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.AbstractComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -66,10 +72,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
@@ -105,9 +115,8 @@ class BubbleOverlayService : Service(),
         private const val NOTIFICATION_CHANNEL_ID = "whisper_board_bubble"
         private const val NOTIFICATION_CHANNEL_NAME = "Whisper Board bubble"
         private const val NOTIFICATION_ID = 0xB1B
-        private const val DEFAULT_X = 16
         private const val DEFAULT_Y = 320
-        private const val EDGE_DRAG_THRESHOLD_PX = 8
+        private const val COOLDOWN_TICK_INTERVAL_MS = 1_000L
 
         const val ACTION_START = "com.whisperboard.bubble.START"
         const val ACTION_STOP = "com.whisperboard.bubble.STOP"
@@ -198,6 +207,26 @@ class BubbleOverlayService : Service(),
     private var isFullscreenAppForeground = false
     private var dragOffEdge = false
 
+    /**
+     * Cached edge — the persistent overlay's gravity is decided by this value
+     * at attach time and updated reactively when [BubbleSettingsRepository.edge]
+     * emits a new value.
+     */
+    @Volatile
+    private var currentEdge: Edge = BubbleSettingsRepository.DEFAULT_EDGE
+
+    /** Most-recent polished transcript surfaced to the peek sheet. */
+    @Volatile
+    private var lastResultText: String? = null
+    private val composeLastResultText = androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    /** Transient drag-tracker state — present only during an active perpendicular drag. */
+    private var dragTrackerView: View? = null
+    private var dragTrackerStartX: Float = 0f
+
+    /** Cooldown poll loop — alive only while in [BubbleState.Dismissed]. */
+    private var cooldownTickJob: Job? = null
+
     /** Renderable state pushed into the composition. */
     private val composeBubbleState = androidx.compose.runtime.mutableStateOf<BubbleState>(BubbleState.Idle)
     private val composeWaveformAmplitude = mutableFloatStateOf(0f)
@@ -260,6 +289,10 @@ class BubbleOverlayService : Service(),
         observeWaveform()
         observeAutoCopyToggle()
         observeVisibility()
+        observeRecordingForegroundType()
+        observeEdge()
+        observeLastResult()
+        observeDismissedTick()
 
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
     }
@@ -304,29 +337,50 @@ class BubbleOverlayService : Service(),
 
     private fun startForegroundIfNeeded() {
         ensureNotificationChannel()
-        val notification: Notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
+        // Idle attach: declare only SPECIAL_USE. Android 14+ rejects the
+        // combined MICROPHONE | SPECIAL_USE bitmask if the service isn't
+        // actively recording at attach time, which silently breaks
+        // AlwaysVisible — the overlay never gets to the foreground state and
+        // never attaches. We upgrade to MICROPHONE while recording (see
+        // observeRecordingForegroundType) and drop back on stop.
+        setForegroundType(recording = false)
+    }
+
+    private fun setForegroundType(recording: Boolean) {
+        val notification: Notification = buildBubbleNotification()
+        when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> {
+                val type = if (recording) {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                } else {
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                }
+                startForeground(NOTIFICATION_ID, notification, type)
+            }
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+                // Android 10–13 accepts the type bitmask; combined types are
+                // permitted regardless of mic-active state on these versions.
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+                )
+            }
+            else -> {
+                // Pre-Android 10 has no per-call type argument.
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }
+    }
+
+    private fun buildBubbleNotification(): Notification =
+        Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_mic)
             .setContentTitle("Whisper Board")
             .setContentText("Bubble is active")
             .setOngoing(true)
             .build()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
-            )
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
-        }
-    }
 
     private fun ensureNotificationChannel() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
@@ -356,21 +410,30 @@ class BubbleOverlayService : Service(),
             return
         }
 
-        // Attach with the default placement immediately, then update once
-        // the persisted position emits. We avoid runBlocking on the main
-        // thread here so the service start path stays responsive.
-        layoutParams = buildOverlayParams(DEFAULT_X, DEFAULT_Y)
+        // Snap the cached edge once at attach time. The edge observer will
+        // reattach with new gravity if the user changes the side.
+        currentEdge = runBlocking { bubbleSettings.edge.first() }
+        layoutParams = buildOverlayParams(DEFAULT_Y)
 
         val view = ComposeBubbleView(this) {
             BubbleView(
                 state = composeBubbleState.value,
-                waveformAmplitude = composeWaveformAmplitude.floatValue,
-                onTap = { handleEvent(BubbleEvent.Tap) },
+                edge = currentEdge,
+                lastResultText = composeLastResultText.value,
+                onTap = { handleEvent(BubbleEvent.Peek) },
                 onLongPressStart = { handleEvent(BubbleEvent.LongPressStart) },
                 onLongPressEnd = { handleEvent(BubbleEvent.LongPressEnd) },
-                onDrag = ::onDragDelta,
+                onDragHorizontal = { startX, _ ->
+                    // The transient tracker covers the full screen and is the
+                    // surface that classifies "is this a dismiss-tear?". The
+                    // sliver-side gesture only kicks the tracker into life.
+                    ensureDragTracker(startX)
+                },
+                onDragVertical = { dy -> onDragDelta(0f, dy) },
                 onDragEnd = ::onDragEnd,
-                onDismiss = { handleEvent(BubbleEvent.Dismiss) },
+                onPeekTimeout = { handleEvent(BubbleEvent.PeekTimeout) },
+                onReinsert = ::onReinsertRequested,
+                onCopy = ::onCopyRequested,
                 modifier = Modifier.fillMaxWidth(),
             )
         }
@@ -379,12 +442,12 @@ class BubbleOverlayService : Service(),
         try {
             windowManager.addView(view, layoutParams)
             isAttached = true
-            // Restore the persisted position once it's loaded — happens off
-            // the main thread, then jumps back here to update the layout.
+            // Restore the persisted vertical position once it's loaded —
+            // happens off the main thread, then jumps back here to update the
+            // layout. The horizontal coordinate is discarded by design.
             serviceScope.launch {
                 val pos = bubbleSettings.position.first()
                 if (!pos.isUnset && layoutParams != null && bubbleView == view) {
-                    layoutParams?.x = pos.x
                     layoutParams?.y = pos.y
                     runCatching { windowManager.updateViewLayout(view, layoutParams) }
                 }
@@ -396,6 +459,7 @@ class BubbleOverlayService : Service(),
     }
 
     private fun detachOverlay() {
+        teardownDragTracker()
         val view = bubbleView ?: return
         runCatching { windowManager.removeView(view) }
         bubbleView = null
@@ -403,24 +467,40 @@ class BubbleOverlayService : Service(),
         isAttached = false
     }
 
-    private fun buildOverlayParams(x: Int, y: Int): WindowManager.LayoutParams {
+    /**
+     * Persistent overlay window LayoutParams. The new design anchors the
+     * window to a side edge (LEFT or RIGHT) — width is just the visible
+     * 8 dp sliver plus its 24 dp invisible touch margin (~32 dp), and the
+     * window's vertical centre is positioned via [yOffset].
+     *
+     * `FLAG_NOT_TOUCH_MODAL` lets touches that land outside this narrow
+     * column reach the underlying app — without it the bubble would
+     * effectively become a fullscreen tap shield.
+     */
+    private fun buildOverlayParams(yOffset: Int): WindowManager.LayoutParams {
         val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
             WindowManager.LayoutParams.TYPE_PHONE
         }
+        val edgeGravity = when (currentEdge) {
+            Edge.RIGHT -> Gravity.TOP or Gravity.END
+            Edge.LEFT -> Gravity.TOP or Gravity.START
+        }
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
             type,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            this.x = x
-            this.y = y
+            gravity = edgeGravity
+            this.x = 0
+            this.y = yOffset
         }
     }
 
@@ -436,25 +516,112 @@ class BubbleOverlayService : Service(),
 
     private fun onDragEnd() {
         val params = layoutParams ?: return
-        // Persist position so the bubble re-appears where the user left it.
+        // Persist only the vertical offset — the new design pins the sliver
+        // to a side edge (currentEdge), so the horizontal coordinate is
+        // always 0. The legacy `bubble_x` key remains in DataStore for
+        // forwards compat but is unread.
         serviceScope.launch {
-            bubbleSettings.setPosition(params.x, params.y)
+            bubbleSettings.setPosition(0, params.y)
         }
-        // Heuristic for "dragged off-edge": the user pushed the bubble
-        // far enough negative that it is no longer visible. We
-        // intentionally use a generous threshold so the user has to be
-        // deliberate about hiding the bubble this way.
-        val display = windowManager.defaultDisplay
-        val width = display.width
-        val height = display.height
-        val draggedOff = params.x < -BUBBLE_HIDDEN_OVERHANG ||
-            params.x > width - EDGE_DRAG_THRESHOLD_PX ||
-            params.y < -BUBBLE_HIDDEN_OVERHANG ||
-            params.y > height - EDGE_DRAG_THRESHOLD_PX
-        if (draggedOff != dragOffEdge) {
-            dragOffEdge = draggedOff
-            refreshOverlayVisibility()
+    }
+
+    // --- Transient drag-tracker window ---
+    //
+    // A perpendicular drag from the sliver is too long to detect inside the
+    // narrow persistent window — once the finger leaves the ~32 dp wide
+    // column the gesture stream stops. The tracker is a fullscreen,
+    // touch-transparent overlay that lives only for the duration of the
+    // drag; it captures the move stream end-to-end, and on each move
+    // delegates classification to [DragTear.isDismissAttempt]. When the
+    // gesture qualifies as a tear, it fires [BubbleEvent.DragTearComplete]
+    // and tears itself down.
+
+    /**
+     * Bring up the transient tracker overlay if it isn't already attached.
+     * [startX] is the absolute x where the drag began — the tracker keeps
+     * it because each per-frame [handleDragTrackerMove] call needs both
+     * endpoints to compute travel.
+     */
+    private fun ensureDragTracker(startX: Float) {
+        if (dragTrackerView != null) return
+        dragTrackerStartX = startX
+
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        } else {
+            @Suppress("DEPRECATION")
+            WindowManager.LayoutParams.TYPE_PHONE
         }
+        val params = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            type,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT,
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+
+        val view = ComposeBubbleView(this) {
+            DragTrackerScrim(
+                onMove = { current -> handleDragTrackerMove(dragTrackerStartX, current) },
+                onUp = ::handleDragTrackerUp,
+            )
+        }
+        runCatching { windowManager.addView(view, params) }
+        dragTrackerView = view
+    }
+
+    private fun teardownDragTracker() {
+        val view = dragTrackerView ?: return
+        runCatching { windowManager.removeView(view) }
+        dragTrackerView = null
+    }
+
+    private fun handleDragTrackerMove(startX: Float, currentX: Float) {
+        val width = resources.displayMetrics.widthPixels
+        if (DragTear.isDismissAttempt(startX, currentX, width, currentEdge)) {
+            val now = System.currentTimeMillis()
+            val cooldownMs = runBlocking { bubbleSettings.cooldownMs.first() }
+            handleEvent(BubbleEvent.DragTearComplete(now = now, cooldownMs = cooldownMs))
+            serviceScope.launch {
+                bubbleSettings.setDismissedAt(now)
+                refreshOverlayVisibility()
+            }
+            teardownDragTracker()
+        }
+    }
+
+    private fun handleDragTrackerUp() {
+        teardownDragTracker()
+    }
+
+    // --- Sheet affordances (peek sheet's re-insert / copy) ---
+
+    /**
+     * Re-insert the most recent transcript. v1: clipboard fallback + a toast
+     * — the full InputConnection / accessibility re-insert path is a
+     * follow-up. The user still has a usable affordance: their last
+     * utterance is back on the clipboard, ready for a paste.
+     */
+    private fun onReinsertRequested() {
+        val text = lastResultText
+        if (text.isNullOrEmpty()) {
+            showToast("No recent dictation")
+            return
+        }
+        writeToClipboard(text)
+        showToast("Re-insert coming soon — copied")
+    }
+
+    private fun onCopyRequested() {
+        val text = lastResultText
+        if (text.isNullOrEmpty()) {
+            showToast("No recent dictation")
+            return
+        }
+        writeToClipboard(text)
+        showToast("Copied")
     }
 
     // --- State machine wiring ---
@@ -783,9 +950,109 @@ class BubbleOverlayService : Service(),
         }
     }
 
+    /**
+     * Re-issue [startForeground] with the right service-type bitmask whenever
+     * the bubble enters or leaves [BubbleState.Recording]. On Android 14+
+     * (`UPSIDE_DOWN_CAKE`, SDK 34) the OS rejects a combined
+     * `MICROPHONE | SPECIAL_USE` type at attach time when the service is not
+     * actively using the mic — which is the case for the bubble's idle state.
+     * We declare only `SPECIAL_USE` at idle and upgrade to `MICROPHONE | SPECIAL_USE`
+     * exactly while the state machine is in `Recording`.
+     *
+     * Source of truth is [composeBubbleState], which [applyTransition] writes
+     * after every state-machine transition. `snapshotFlow` gives us the
+     * `distinctUntilChanged` shape we need for de-duped enter/leave edges.
+     */
+    private fun observeRecordingForegroundType() {
+        serviceScope.launch {
+            snapshotFlow { composeBubbleState.value }
+                .map { it is BubbleState.Recording }
+                .distinctUntilChanged()
+                .collect { isRecording ->
+                    setForegroundType(recording = isRecording)
+                }
+        }
+    }
+
+    /**
+     * Watch [BubbleSettingsRepository.edge] for user-driven changes (Settings
+     * screen flip). The persistent overlay's gravity is baked into its
+     * LayoutParams — to honour an edge change we tear the window down and
+     * reattach so the new gravity takes effect.
+     */
+    private fun observeEdge() {
+        serviceScope.launch {
+            bubbleSettings.edge.distinctUntilChanged().collectLatest { edge ->
+                if (edge != currentEdge) {
+                    currentEdge = edge
+                    if (isAttached) {
+                        detachOverlay()
+                        refreshOverlayVisibility()
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Surface the most recent dictation entry's polished text to the peek
+     * sheet. Reads the newest 1-row stream from [DictationHistoryRepository]
+     * and updates both the cached field (used by `onCopy` / `onReinsert`)
+     * and the Compose state (read by [BubbleView]).
+     */
+    private fun observeLastResult() {
+        serviceScope.launch {
+            historyRepository.recent(limit = 1).collectLatest { entries ->
+                val text = entries.firstOrNull()?.polishedTranscript
+                lastResultText = text
+                composeLastResultText.value = text
+            }
+        }
+    }
+
+    /**
+     * Cooldown clock. While the state machine is in [BubbleState.Dismissed],
+     * poll once per second; when `now >= dismissedAt + cooldownMs`, clear
+     * the persisted dismissedAt, fire [BubbleEvent.CooldownElapsed], and
+     * re-evaluate visibility. The poll is cheap (one DataStore read +
+     * arithmetic) and bounded — it cancels itself on the first transition
+     * out of Dismissed.
+     */
+    private fun observeDismissedTick() {
+        serviceScope.launch {
+            snapshotFlow { composeBubbleState.value }
+                .map { it is BubbleState.Dismissed }
+                .distinctUntilChanged()
+                .collect { dismissed ->
+                    cooldownTickJob?.cancel()
+                    if (dismissed) {
+                        cooldownTickJob = serviceScope.launch {
+                            while (true) {
+                                delay(COOLDOWN_TICK_INTERVAL_MS)
+                                val dismissedAt = bubbleSettings.dismissedAt.first() ?: break
+                                val cooldownMs = bubbleSettings.cooldownMs.first()
+                                val now = System.currentTimeMillis()
+                                if (now >= dismissedAt + cooldownMs) {
+                                    bubbleSettings.clearDismissedAt()
+                                    handleEvent(BubbleEvent.CooldownElapsed)
+                                    refreshOverlayVisibility()
+                                    break
+                                }
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
     private fun refreshOverlayVisibility() {
         serviceScope.launch {
             val mode = bubbleSettings.visibilityMode.first()
+            val dismissedAt = bubbleSettings.dismissedAt.first()
+            val cooldownMs = bubbleSettings.cooldownMs.first()
+            val cooldown = BubbleCooldown(dismissedAt, cooldownMs)
+            val cooldownActive = cooldown.isActive(System.currentTimeMillis())
+
             val inputs = BubbleVisibilityInputs(
                 mode = mode,
                 onLockscreen = visibilityController.isOnLockscreen(),
@@ -793,6 +1060,7 @@ class BubbleOverlayService : Service(),
                 draggedOffEdge = dragOffEdge,
                 imeVisible = false, // intentionally never hides the bubble
                 isSummoned = visibilityController.isSummoned,
+                cooldownActive = cooldownActive,
             )
             val shouldShow = BubbleVisibilityRules.shouldBeVisible(inputs)
             if (shouldShow) attachOverlay() else detachOverlay()
@@ -837,8 +1105,6 @@ class BubbleOverlayService : Service(),
 
 }
 
-private const val BUBBLE_HIDDEN_OVERHANG = 32
-
 /**
  * Lightweight wrapper around [KeyguardManager] + a "summoned" flag so the
  * service can ask "should we show the bubble right now?" without leaking
@@ -857,4 +1123,33 @@ private class BubbleVisibilityController(
     }
 
     fun isOnLockscreen(): Boolean = keyguardManager.isKeyguardLocked
+}
+
+/**
+ * Fullscreen, touch-transparent (to user-perceived rendering) Compose
+ * surface that captures the in-flight perpendicular drag once the user has
+ * left the narrow sliver column. Each pointer move is forwarded to the
+ * service via [onMove] so it can run [DragTear.isDismissAttempt] against
+ * the current screen width and edge. [onUp] fires on either drag-end or
+ * drag-cancel — both of which mean "tear down the scrim".
+ */
+@Composable
+private fun DragTrackerScrim(
+    onMove: (currentX: Float) -> Unit,
+    onUp: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragEnd = { onUp() },
+                    onDragCancel = { onUp() },
+                    onDrag = { change, _ ->
+                        change.consume()
+                        onMove(change.position.x)
+                    },
+                )
+            },
+    )
 }

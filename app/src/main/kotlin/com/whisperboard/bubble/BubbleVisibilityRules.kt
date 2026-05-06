@@ -59,6 +59,9 @@ data class BubbleVisibilityInputs(
      * ignore this flag.
      */
     val isSummoned: Boolean = false,
+    /** True iff the dismiss cooldown is currently active.
+     *  See [BubbleCooldown] for the calculation. */
+    val cooldownActive: Boolean = false,
 )
 
 /**
@@ -68,11 +71,12 @@ data class BubbleVisibilityInputs(
  *
  * Rules, in order:
  * 1. [BubbleVisibilityMode.Disabled] -> hidden, full stop.
- * 2. Lockscreen -> hidden.
- * 3. Foreground app declared fullscreen -> hidden.
- * 4. User dragged off-edge -> hidden until re-summoned.
- * 5. [BubbleVisibilityMode.SummonedOnly] -> visible iff `isSummoned`.
- * 6. [BubbleVisibilityMode.AlwaysVisible] -> visible.
+ * 2. Cooldown active -> hidden until cooldown expires.
+ * 3. Lockscreen -> hidden.
+ * 4. Foreground app declared fullscreen -> hidden.
+ * 5. User dragged off-edge -> hidden until re-summoned.
+ * 6. [BubbleVisibilityMode.SummonedOnly] -> visible iff `isSummoned`.
+ * 7. [BubbleVisibilityMode.AlwaysVisible] -> visible.
  *
  * IME visibility is intentionally absent from the rule set. ADR-0001 declares
  * the bubble and the IME independent surfaces.
@@ -80,6 +84,7 @@ data class BubbleVisibilityInputs(
 object BubbleVisibilityRules {
     fun shouldBeVisible(inputs: BubbleVisibilityInputs): Boolean {
         if (inputs.mode == BubbleVisibilityMode.Disabled) return false
+        if (inputs.cooldownActive) return false
         if (inputs.onLockscreen) return false
         if (inputs.foregroundAppIsFullscreen) return false
         if (inputs.draggedOffEdge) return false

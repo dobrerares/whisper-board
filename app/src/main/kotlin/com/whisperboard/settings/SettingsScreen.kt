@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.dp
 import com.whisperboard.R
 import com.whisperboard.bubble.BubbleSettingsRepository
 import com.whisperboard.bubble.BubbleVisibilityMode
+import com.whisperboard.bubble.Edge
 import com.whisperboard.bubble.shouldShowAccessibilityNudge
 import com.whisperboard.model.BehaviorSettingsRepository
 import com.whisperboard.model.DownloadProgress
@@ -343,6 +344,10 @@ private fun BubblePage(
         .collectAsState(initial = 0)
     val nudgeDismissed by bubbleSettingsRepository.accessibilityNudgeDismissed
         .collectAsState(initial = false)
+    val edge by bubbleSettingsRepository.edge
+        .collectAsState(initial = BubbleSettingsRepository.DEFAULT_EDGE)
+    val cooldownMs by bubbleSettingsRepository.cooldownMs
+        .collectAsState(initial = BubbleSettingsRepository.DEFAULT_COOLDOWN_MS)
 
     val showNudge = shouldShowAccessibilityNudge(
         standaloneUseCount = standaloneUseCount,
@@ -467,6 +472,76 @@ private fun BubblePage(
                 },
                 enabled = overlayPermissionGranted || entry == BubbleVisibilityMode.Disabled,
             )
+        }
+
+        HorizontalDivider()
+
+        Text(
+            text = "Edge side",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "Which screen edge the sliver lives on.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Edge.entries.forEach { entry ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = entry == edge,
+                    onClick = {
+                        scope.launch { bubbleSettingsRepository.setEdge(entry) }
+                    },
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = when (entry) {
+                        Edge.RIGHT -> "Right"
+                        Edge.LEFT -> "Left"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+            }
+        }
+
+        HorizontalDivider()
+
+        Text(
+            text = "Cooldown after dismiss",
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            text = "How long the sliver stays hidden after you drag-tear it.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        listOf(
+            60_000L to "1 minute",
+            5L * 60_000L to "5 minutes",
+            15L * 60_000L to "15 minutes",
+            60L * 60_000L to "1 hour",
+            Long.MAX_VALUE to "Until you open Whisper Board",
+        ).forEach { (ms, label) ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(
+                    selected = ms == cooldownMs,
+                    onClick = {
+                        scope.launch { bubbleSettingsRepository.setCooldownMs(ms) }
+                    },
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(text = label, style = MaterialTheme.typography.bodyMedium)
+            }
         }
     }
 }

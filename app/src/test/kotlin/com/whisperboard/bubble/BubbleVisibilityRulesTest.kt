@@ -148,4 +148,53 @@ class BubbleVisibilityRulesTest {
             )
         )
     }
+
+    @Test
+    fun `cooldown active hides AlwaysVisible`() {
+        val visible = BubbleVisibilityRules.shouldBeVisible(
+            BubbleVisibilityInputs(
+                mode = BubbleVisibilityMode.AlwaysVisible,
+                onLockscreen = false,
+                foregroundAppIsFullscreen = false,
+                draggedOffEdge = false,
+                imeVisible = false,
+                isSummoned = false,
+                cooldownActive = true,
+            )
+        )
+        assertFalse(visible)
+    }
+
+    @Test
+    fun `cooldown active does not override Disabled`() {
+        // Disabled is checked first; cooldown evaluation is moot.
+        val visible = BubbleVisibilityRules.shouldBeVisible(
+            BubbleVisibilityInputs(
+                mode = BubbleVisibilityMode.Disabled,
+                onLockscreen = false,
+                foregroundAppIsFullscreen = false,
+                draggedOffEdge = false,
+                imeVisible = false,
+                isSummoned = false,
+                cooldownActive = true,
+            )
+        )
+        assertFalse(visible)
+    }
+
+    @Test
+    fun `cooldown inactive plus AlwaysVisible is visible`() {
+        val visible = BubbleVisibilityRules.shouldBeVisible(
+            BubbleVisibilityInputs(
+                mode = BubbleVisibilityMode.AlwaysVisible,
+                onLockscreen = false,
+                foregroundAppIsFullscreen = false,
+                draggedOffEdge = false,
+                imeVisible = false,
+                isSummoned = false,
+                cooldownActive = false,
+            )
+        )
+        assertTrue(visible)
+    }
 }
