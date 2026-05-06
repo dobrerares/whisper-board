@@ -389,13 +389,17 @@ class BubbleOverlayService : Service(),
         val view = ComposeBubbleView(this) {
             BubbleView(
                 state = composeBubbleState.value,
-                waveformAmplitude = composeWaveformAmplitude.floatValue,
+                edge = Edge.RIGHT,                               // STUB (Task 10: read from bubbleSettings.edge)
+                lastResultText = null,                           // STUB (Task 10: wire from history repo)
                 onTap = { handleEvent(BubbleEvent.Tap) },
                 onLongPressStart = { handleEvent(BubbleEvent.LongPressStart) },
                 onLongPressEnd = { handleEvent(BubbleEvent.LongPressEnd) },
-                onDrag = ::onDragDelta,
+                onDragHorizontal = { _, _ -> },                  // STUB (Task 10: drag-tear classifier)
+                onDragVertical = { dy -> onDragDelta(0f, dy) },  // preserves existing reposition behavior
                 onDragEnd = ::onDragEnd,
-                onDismiss = { handleEvent(BubbleEvent.Dismiss) },
+                onPeekTimeout = { handleEvent(BubbleEvent.PeekTimeout) },
+                onReinsert = { },                                // STUB (Task 10: wire to InputConnection / accessibility)
+                onCopy = { },                                    // STUB (Task 10: wire to ClipboardManager)
                 modifier = Modifier.fillMaxWidth(),
             )
         }
