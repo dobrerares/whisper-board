@@ -80,6 +80,18 @@ class SettingsActivity : ComponentActivity() {
             retentionProvider = { historySettingsRepository.retention.first() },
         )
 
+        // "Until you open Whisper Board" cooldown is cleared whenever the
+        // user opens Settings (the only entry point that signals re-engagement).
+        // The IME bind and the bubble service starting after process death
+        // do *not* clear the cooldown — those happen incidentally and
+        // shouldn't override the user's "hide it" intent.
+        lifecycleScope.launch {
+            val cd = bubbleSettingsRepository.cooldownMs.first()
+            if (cd == Long.MAX_VALUE) {
+                bubbleSettingsRepository.clearDismissedAt()
+            }
+        }
+
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
